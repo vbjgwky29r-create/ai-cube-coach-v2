@@ -1,0 +1,223 @@
+// AI Cube Coach - 数据库模型定义
+// 生成客户端: npx prisma generate
+// 同步数据库: npx prisma db push
+// 重置数据库: npx prisma migrate reset
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// 用户相关
+// ============================================
+
+model User {
+  id        String    @id @default(cuid())
+  email     String    @unique
+  name      String?
+  image     String?
+  tier      Tier      @default(FREE)
+  level     Level     @default(BEGINNER)
+
+  // 关联
+  analyses  SolutionAnalysis[]
+  mastered  MasteredFormula[]
+  reviews   ReviewSchedule[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@map("users")
+}
+
+enum Tier {
+  FREE      // 免费版
+  PRO       // Pro版
+  LIFETIME  // 终身版
+}
+
+enum Level {
+  BEGINNER      // 初学者
+  INTERMEDIATE  // 进阶者
+  ADVANCED      // 高手
+}
+
+// ============================================
+// 解法分析记录
+// ============================================
+
+model SolutionAnalysis {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // 输入
+  scramble        String   // 打乱公式
+  userSolution    String   // 用户解法
+  optimalSolution String?  // AI计算的最优解
+
+  // 分析结果
+  qualityScore    Float    @default(0)    // 质量评分 0-10
+  steps           Int      @default(0)    // 用户步数
+  optimalSteps    Int?                   // 最优步数
+  estimatedTime   Float?                  // 预估用时(秒)
+
+  // 识别的公式
+  formulasUsed    String[]                // 用到的公式ID列表
+
+  // 优化建议 (JSON存储)
+  optimizations   Json?                   // OptimizationResult[]
+
+  // 新学到的公式
+  newFormulas     String[]                // 本次新学的公式ID
+
+  createdAt       DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("solution_analyses")
+}
+
+// ============================================
+// 掌握的公式
+// ============================================
+
+model MasteredFormula {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  formulaId       String   // 关联公式库ID
+  formulaName     String   // 冗余存储，方便查询
+  category        FormulaCategory
+
+  // 学习进度
+  practiceCount   Int      @default(0)    // 练习次数
+  masteryLevel    Int      @default(0)    // 掌握程度 0-100
+  lastReviewedAt  DateTime @default(now())
+  nextReviewAt    DateTime                // 下次复习时间 (遗忘曲线)
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([userId, formulaId])
+  @@index([userId, nextReviewAt])
+  @@map("mastered_formulas")
+}
+
+// ============================================
+// 复习计划
+// ============================================
+
+model ReviewSchedule {
+  id              String       @id @default(cuid())
+  userId          String
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  formulaId       String
+  formulaName     String
+  category        FormulaCategory
+
+  scheduledAt     DateTime
+  status          ReviewStatus @default(PENDING)
+
+  notificationSent Boolean     @default(false)
+
+  createdAt       DateTime     @default(now())
+  completedAt     DateTime?
+
+  @@index([userId, scheduledAt])
+  @@index([status])
+  @@map("review_schedules")
+}
+
+enum ReviewStatus {
+  PENDING    // 待复习
+  COMPLETED  // 已完成
+  SKIPPED    // 已跳过
+}
+
+// ============================================
+// 公式库 (教学用)
+// ============================================
+
+model FormulaLibrary {
+  id              String          @id @default(cuid())
+
+  // 基本信息
+  name            String          // 公式名称 (如: "Sune", "T-Perm")
+  notation        String          // 标准记法 (如: "R U R' U R U2 R'")
+  category        FormulaCategory // 所属分类
+  difficulty      Int             @default(1) // 难度 1-5
+
+  // 教学内容
+  explanation     String          // 讲解
+  tips            String?         // 小技巧/注意事项
+  whenToUse       String?         // 什么时候用
+
+  // 资源
+  videoUrl        String?         // 视频教程链接
+  practiceScenarios Json?         // 练习题 JSON
+
+  // 元数据
+  tags            String[]        @default([]) // 标签
+  isPopular       Boolean         @default(false) // 是否常用
+
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@index([category])
+  @@index([difficulty])
+  @@map("formula_library")
+}
+
+enum FormulaCategory {
+  CROSS       // 底层十字
+  F2L         // 前两层 (First Two Layers)
+  OLL         // 顶层朝向 (Orientation of Last Layer)
+  PLL         // 顶层位置 (Permutation of Last Layer)
+  TRICKS      // 技巧公式
+  OTHER       // 其他
+}
+
+// ============================================
+// 订阅记录 (可选，支付功能)
+// ============================================
+
+model Subscription {
+  id              String   @id @default(cuid())
+  userId          String
+  tier            Tier
+
+  // 状态
+  status          SubscriptionStatus @default(ACTIVE)
+
+  // 周期
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+
+  // 支付信息
+  paymentMethod   String?  // 'wechat' | 'alipay' | 'usdt'
+  paymentAmount   Decimal? @db.Decimal(10, 2)
+  transactionId   String?  @unique // 第三方交易ID
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  cancelledAt     DateTime?
+
+  @@index([userId])
+  @@index([status])
+  @@map("subscriptions")
+}
+
+enum SubscriptionStatus {
+  ACTIVE      // 激活中
+  CANCELLED   // 已取消
+  EXPIRED     // 已过期
+  PENDING     // 待支付
+}
