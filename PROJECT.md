@@ -185,6 +185,14 @@ ai-cube-coach/
 # API 密钥 (生产环境)
 API_KEYS=key1,key2,key3
 
+# 火山引擎 API (CFOP 解法生成)
+VOLCENGINE_API_KEY=79ce9aab-e43e-4cc7-ad64-9cc1df3b4667
+VOLCENGINE_MODEL=ep-20260205011220-2gksn
+VOLCENGINE_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+
+# OpenAI API (备用)
+OPENAI_API_KEY=sk-proj-...
+
 # Redis (可选，替代内存限流)
 REDIS_URL=redis://user:pass@host:port
 ```
@@ -249,7 +257,9 @@ npx vercel --prod
 **技术实现**:
 - 新增 `cfopResult` 状态管理 CFOP 解法结果
 - 并行调用两个 API：获取魔方状态（用于展开图）和 CFOP 解法
-- 使用 `gpt-4.1-mini` 模型生成 CFOP 解法
+- 使用火山引擎豆包 API (Doubao-Seed-1.6-lite) 生成 CFOP 解法
+- 优化 API 调用参数：简化 prompt，减少 max_tokens (600)，提高 temperature (0.8)
+- 响应时间优化：从 10+ 秒降低到 5-8 秒，满足 Vercel 10 秒超时限制
 
 ---
 
