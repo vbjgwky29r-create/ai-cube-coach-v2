@@ -19,17 +19,17 @@ export function CubeKeyboard({ onInput, onBackspace, onClear, onSpace, value = '
   const wideMoves = ['r', 'l', 'u', 'd', 'f', 'b']
 
   // 中层动作
-  const middleMoves = ['M', 'E', 'S', 'm', 'e', 's']
+  const middleMoves = ['M', 'E', 'S']
 
   // 旋转动作（转体）
   const rotations = ['x', 'y', 'z']
 
   // 快捷公式
   const shortcuts = [
-    { label: 'Sexy Move', notation: "R U R' U'", color: 'from-orange-500/20 to-red-500/20' },
-    { label: 'Sledgehammer', notation: "R' F R F'", color: 'from-blue-500/20 to-indigo-500/20' },
-    { label: 'Sune', notation: "R U R' U R U2 R'", color: 'from-green-500/20 to-emerald-500/20' },
-    { label: 'T-Perm', notation: "R U R' U' R' F R2 U' R'", color: 'from-purple-500/20 to-pink-500/20' },
+    { label: 'Sexy Move', notation: "R U R' U'", color: 'bg-orange-500' },
+    { label: 'Sledgehammer', notation: "R' F R F'", color: 'bg-blue-500' },
+    { label: 'Sune', notation: "R U R' U R U2 R'", color: 'bg-green-500' },
+    { label: 'T-Perm', notation: "R U R' U' R' F R2 U' R'", color: 'bg-purple-500' },
   ]
 
   const handleKeyPress = (key: string) => {
@@ -38,7 +38,6 @@ export function CubeKeyboard({ onInput, onBackspace, onClear, onSpace, value = '
 
   const canAddModifier = () => {
     const trimmed = value.trimEnd()
-    // 检查最后一个字符是否是动作字母
     const lastChar = trimmed.slice(-1)
     return /^[RLUDFBrludfbMESmesxyz]$/.test(lastChar) &&
            !lastChar.endsWith("'") &&
@@ -46,16 +45,16 @@ export function CubeKeyboard({ onInput, onBackspace, onClear, onSpace, value = '
   }
 
   return (
-    <div className={cn("space-y-2", className)}>
+    <div className={cn("space-y-3", className)}>
       {/* 基础动作 */}
-      <div className="space-y-1">
-        <div className="text-[10px] font-medium text-text-secondary uppercase tracking-wider">基础</div>
-        <div className="grid grid-cols-6 gap-1">
+      <div>
+        <div className="text-xs font-medium text-slate-500 mb-1.5 uppercase tracking-wider">基础动作</div>
+        <div className="grid grid-cols-6 gap-1.5">
           {basicMoves.map((move) => (
             <button
               key={move}
               onClick={handleKeyPress.bind(null, move)}
-              className="key-basic font-cube"
+              className="h-11 rounded-lg font-mono font-bold text-base bg-white border-2 border-slate-200 text-slate-700 hover:border-orange-400 hover:bg-orange-50 active:scale-95 transition-all shadow-sm"
             >
               {move}
             </button>
@@ -63,15 +62,15 @@ export function CubeKeyboard({ onInput, onBackspace, onClear, onSpace, value = '
         </div>
       </div>
 
-      {/* 宽层动��� */}
-      <div className="space-y-1">
-        <div className="text-[10px] font-medium text-text-secondary uppercase tracking-wider">两层</div>
-        <div className="grid grid-cols-6 gap-1">
+      {/* 宽层动作 */}
+      <div>
+        <div className="text-xs font-medium text-slate-500 mb-1.5 uppercase tracking-wider">两层转动</div>
+        <div className="grid grid-cols-6 gap-1.5">
           {wideMoves.map((move) => (
             <button
               key={move}
               onClick={handleKeyPress.bind(null, move)}
-              className="key-basic key-wide font-cube"
+              className="h-11 rounded-lg font-mono font-bold text-base bg-blue-50 border-2 border-blue-200 text-blue-700 hover:border-blue-400 hover:bg-blue-100 active:scale-95 transition-all shadow-sm"
             >
               {move}
             </button>
@@ -79,101 +78,101 @@ export function CubeKeyboard({ onInput, onBackspace, onClear, onSpace, value = '
         </div>
       </div>
 
-      {/* 中层动作 */}
-      <div className="space-y-1">
-        <div className="text-[10px] font-medium text-text-secondary uppercase tracking-wider">中层</div>
-        <div className="grid grid-cols-6 gap-1">
-          {middleMoves.map((move, idx) => (
-            <button
-              key={move}
-              onClick={handleKeyPress.bind(null, move)}
-              className={cn(
-                "key-basic font-cube key-middle",
-                idx >= 3 && "bg-emerald-50/50 border-emerald-300/50 text-emerald-700"
-              )}
-            >
-              {move}
-            </button>
-          ))}
+      {/* 中层 + 转体 + 修饰符 */}
+      <div className="grid grid-cols-2 gap-3">
+        {/* 中层动作 */}
+        <div>
+          <div className="text-xs font-medium text-slate-500 mb-1.5 uppercase tracking-wider">中层</div>
+          <div className="grid grid-cols-3 gap-1.5">
+            {middleMoves.map((move) => (
+              <button
+                key={move}
+                onClick={handleKeyPress.bind(null, move)}
+                className="h-11 rounded-lg font-mono font-bold text-base bg-emerald-50 border-2 border-emerald-200 text-emerald-700 hover:border-emerald-400 hover:bg-emerald-100 active:scale-95 transition-all shadow-sm"
+              >
+                {move}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
 
-      {/* 旋转动作 */}
-      <div className="space-y-1">
-        <div className="text-[10px] font-medium text-text-secondary uppercase tracking-wider">转体</div>
-        <div className="grid grid-cols-3 gap-1">
-          {rotations.map((rot) => (
-            <button
-              key={rot}
-              onClick={handleKeyPress.bind(null, rot)}
-              className="key-basic key-rotation font-cube"
-            >
-              {rot}
-            </button>
-          ))}
+        {/* 转体 */}
+        <div>
+          <div className="text-xs font-medium text-slate-500 mb-1.5 uppercase tracking-wider">转体</div>
+          <div className="grid grid-cols-3 gap-1.5">
+            {rotations.map((rot) => (
+              <button
+                key={rot}
+                onClick={handleKeyPress.bind(null, rot)}
+                className="h-11 rounded-lg font-mono font-bold text-base bg-purple-50 border-2 border-purple-200 text-purple-700 hover:border-purple-400 hover:bg-purple-100 active:scale-95 transition-all shadow-sm"
+              >
+                {rot}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
       {/* 修饰符 */}
-      <div className="space-y-1">
-        <div className="text-[10px] font-medium text-text-secondary uppercase tracking-wider">修饰</div>
-        <div className="grid grid-cols-2 gap-1">
+      <div>
+        <div className="text-xs font-medium text-slate-500 mb-1.5 uppercase tracking-wider">修饰符</div>
+        <div className="grid grid-cols-2 gap-1.5">
           <button
             onClick={() => handleKeyPress("'")}
             disabled={!canAddModifier()}
-            className="key-basic font-cube bg-yellow-50 border-yellow-300 text-yellow-800 disabled:opacity-30 disabled:hover:scale-100"
+            className="h-11 rounded-lg font-mono font-bold text-lg bg-amber-50 border-2 border-amber-300 text-amber-700 hover:border-amber-500 hover:bg-amber-100 active:scale-95 transition-all shadow-sm disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:border-amber-300 disabled:hover:bg-amber-50"
           >
-            &apos;
+            &apos; <span className="text-xs font-normal">(逆时针)</span>
           </button>
           <button
             onClick={() => handleKeyPress('2')}
             disabled={!canAddModifier()}
-            className="key-basic font-cube bg-pink-50 border-pink-300 text-pink-800 disabled:opacity-30 disabled:hover:scale-100"
+            className="h-11 rounded-lg font-mono font-bold text-lg bg-pink-50 border-2 border-pink-300 text-pink-700 hover:border-pink-500 hover:bg-pink-100 active:scale-95 transition-all shadow-sm disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:border-pink-300 disabled:hover:bg-pink-50"
           >
-            2
+            2 <span className="text-xs font-normal">(180°)</span>
           </button>
         </div>
       </div>
 
       {/* 快捷公式 */}
-      <div className="space-y-1">
-        <div className="text-[10px] font-medium text-text-secondary uppercase tracking-wider">常用公式</div>
-        <div className="grid grid-cols-2 gap-1">
+      <div>
+        <div className="text-xs font-medium text-slate-500 mb-1.5 uppercase tracking-wider">常用公式</div>
+        <div className="grid grid-cols-2 gap-2">
           {shortcuts.map((shortcut) => (
             <button
               key={shortcut.label}
               onClick={handleKeyPress.bind(null, shortcut.notation)}
               className={cn(
-                "p-2 rounded-lg text-left transition-all duration-200",
-                "bg-gradient-to-r " + shortcut.color,
+                "p-3 rounded-xl text-left transition-all duration-200",
                 "hover:scale-[1.02] active:scale-[0.98]",
-                "border border-white/10 hover:border-white/20"
+                shortcut.color,
+                "text-white shadow-md hover:shadow-lg"
               )}
             >
-              <div className="font-semibold text-xs text-white">{shortcut.label}</div>
-              <div className="text-[10px] text-white/70 font-cube truncate">{shortcut.notation}</div>
+              <div className="font-semibold text-sm">{shortcut.label}</div>
+              <div className="text-xs opacity-90 font-mono mt-0.5 truncate">{shortcut.notation}</div>
             </button>
           ))}
         </div>
       </div>
 
       {/* 操作按钮 */}
-      <div className="grid grid-cols-3 gap-1 pt-2 border-t border-slate-200">
+      <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-200">
         <button
           onClick={onSpace}
-          className="p-2 rounded-lg bg-slate-50 border border-slate-200 hover:bg-slate-100 transition-all active:scale-95 text-xs"
+          className="h-11 rounded-lg bg-slate-100 border border-slate-200 hover:bg-slate-200 transition-all active:scale-95 text-sm font-medium text-slate-600"
         >
           空格
         </button>
         <button
           onClick={onBackspace}
-          className="p-2 rounded-lg bg-slate-50 border border-slate-200 hover:bg-red-50 hover:border-red-200 transition-all active:scale-95 text-xs"
+          className="h-11 rounded-lg bg-slate-100 border border-slate-200 hover:bg-red-50 hover:border-red-200 hover:text-red-600 transition-all active:scale-95 text-sm font-medium text-slate-600"
         >
           ← 删除
         </button>
         <button
           onClick={onClear}
-          className="p-2 rounded-lg bg-gradient-to-r from-red-500 to-red-500 hover:from-red-600 hover:to-red-600 transition-all active:scale-95 text-xs font-semibold text-white"
+          className="h-11 rounded-lg bg-red-500 hover:bg-red-600 transition-all active:scale-95 text-sm font-semibold text-white shadow-sm"
         >
           清空
         </button>

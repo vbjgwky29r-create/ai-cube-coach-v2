@@ -9,7 +9,7 @@ interface CubeNetProps {
 }
 
 /**
- * 魔方展开图组件 - 移动端优化版
+ * 魔方展开图组件 - 响应式优化版
  *
  * 展示6个面的平面展开图：
  *
@@ -24,12 +24,12 @@ interface CubeNetProps {
  *       D D D
  */
 export function CubeNet({ state, showLabels = true, size = 'md' }: CubeNetProps) {
-  // 固定尺寸，确保移动端一致
-  const cellSize = size === 'sm' ? 16 : size === 'lg' ? 32 : 24
-  const fontSize = size === 'sm' ? 10 : size === 'lg' ? 14 : 12
-  const labelWidth = size === 'sm' ? 16 : size === 'lg' ? 24 : 20
+  // 响应式尺寸
+  const cellSize = size === 'sm' ? 14 : size === 'lg' ? 28 : 20
+  const fontSize = size === 'sm' ? 9 : size === 'lg' ? 13 : 11
+  const gap = size === 'sm' ? 1 : 2
 
-  // 内联样式确保颜色正确应用
+  // 颜色映射
   const getColorStyle = (color: CubeColor) => {
     const colors: Record<CubeColor, { bg: string; border: string }> = {
       'U': { bg: '#ffffff', border: '#d1d5db' },
@@ -52,9 +52,9 @@ export function CubeNet({ state, showLabels = true, size = 'md' }: CubeNetProps)
           height: cellSize,
           backgroundColor: style.bg,
           border: `1px solid ${style.border}`,
+          borderRadius: 2,
           boxSizing: 'border-box',
-          minWidth: cellSize,
-          minHeight: cellSize,
+          flexShrink: 0,
         }}
       />
     )
@@ -65,15 +65,14 @@ export function CubeNet({ state, showLabels = true, size = 'md' }: CubeNetProps)
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
       {label && (
         <span style={{
-          width: labelWidth,
           height: 16,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           fontSize,
-          fontWeight: 'bold',
+          fontWeight: 600,
           color: '#64748b',
-          flexShrink: 0
+          marginBottom: 2,
         }}>
           {label}
         </span>
@@ -82,10 +81,11 @@ export function CubeNet({ state, showLabels = true, size = 'md' }: CubeNetProps)
         display: 'grid',
         gridTemplateColumns: `repeat(3, ${cellSize}px)`,
         gridTemplateRows: `repeat(3, ${cellSize}px)`,
-        gap: '1px',
-        backgroundColor: '#cbd5e1',
-        border: '1px solid #cbd5e1',
-        boxSizing: 'border-box',
+        gap: 1,
+        backgroundColor: '#94a3b8',
+        padding: 1,
+        borderRadius: 4,
+        boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
       }}>
         {face.map((row, rowIndex) =>
           row.map((color, colIndex) => (
@@ -97,12 +97,18 @@ export function CubeNet({ state, showLabels = true, size = 'md' }: CubeNetProps)
   )
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
+    <div style={{ 
+      display: 'flex', 
+      flexDirection: 'column', 
+      alignItems: 'center', 
+      gap: gap,
+      padding: 8,
+    }}>
       {/* U 面 */}
       <Face face={state.U} label={showLabels ? 'U' : undefined} />
 
       {/* 中间四行: L, F, R, B */}
-      <div style={{ display: 'flex', gap: '2px' }}>
+      <div style={{ display: 'flex', gap: gap }}>
         <Face face={state.L} label={showLabels ? 'L' : undefined} />
         <Face face={state.F} label={showLabels ? 'F' : undefined} />
         <Face face={state.R} label={showLabels ? 'R' : undefined} />
@@ -116,11 +122,10 @@ export function CubeNet({ state, showLabels = true, size = 'md' }: CubeNetProps)
 }
 
 /**
- * 紧凑版魔方展开图（用于边栏）
+ * 紧凑版魔方展开图（用于小空间）
  */
 export function CompactCubeNet({ state }: { state: CubeState }) {
-  const cellSize = 12
-  const labelWidth = 12
+  const cellSize = 10
   const fontSize = 8
 
   const getColorStyle = (color: CubeColor) => {
@@ -144,106 +149,45 @@ export function CompactCubeNet({ state }: { state: CubeState }) {
           height: cellSize,
           backgroundColor: style.bg,
           border: `1px solid ${style.border}`,
+          borderRadius: 1,
           boxSizing: 'border-box',
         }}
       />
     )
   }
 
-  const MiniFace = ({ face }: { face: CubeColor[][] }) => (
-    <div style={{
-      display: 'grid',
-      gridTemplateColumns: `repeat(3, ${cellSize}px)`,
-      gridTemplateRows: `repeat(3, ${cellSize}px)`,
-      gap: '0.5px',
-      backgroundColor: '#e5e7eb',
-    }}>
-      {face.map((row, rowIndex) =>
-        row.map((color, colIndex) => (
-          <Cell key={`${rowIndex}-${colIndex}`} color={color} />
-        ))
-      )}
+  const MiniFace = ({ face, label }: { face: CubeColor[][], label: string }) => (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+      <span style={{ fontSize, color: '#64748b', marginBottom: 1, fontWeight: 600 }}>{label}</span>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: `repeat(3, ${cellSize}px)`,
+        gridTemplateRows: `repeat(3, ${cellSize}px)`,
+        gap: 0.5,
+        backgroundColor: '#94a3b8',
+        padding: 0.5,
+        borderRadius: 2,
+      }}>
+        {face.map((row, rowIndex) =>
+          row.map((color, colIndex) => (
+            <Cell key={`${rowIndex}-${colIndex}`} color={color} />
+          ))
+        )}
+      </div>
     </div>
   )
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
-      {/* U 面 */}
-      <div style={{ display: 'flex' }}>
-        <span style={{ width: labelWidth, fontSize, color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>U</span>
-        <MiniFace face={state.U} />
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
+      <MiniFace face={state.U} label="U" />
+      <div style={{ display: 'flex', gap: 1 }}>
+        <MiniFace face={state.L} label="L" />
+        <MiniFace face={state.F} label="F" />
+        <MiniFace face={state.R} label="R" />
+        <MiniFace face={state.B} label="B" />
       </div>
-
-      {/* 中间层 */}
-      <div style={{ display: 'flex', gap: '1px' }}>
-        <MiniFaceRow faces={[state.L, state.F, state.R, state.B]} labels={['L', 'F', 'R', 'B']} />
-      </div>
-
-      {/* D 面 */}
-      <div style={{ display: 'flex' }}>
-        <span style={{ width: labelWidth, fontSize, color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>D</span>
-        <MiniFace face={state.D} />
-      </div>
+      <MiniFace face={state.D} label="D" />
     </div>
-  )
-}
-
-function MiniFaceRow({ faces, labels }: { faces: CubeColor[][][]; labels: string[] }) {
-  const cellSize = 12
-  const labelWidth = 12
-
-  const getColorStyle = (color: CubeColor) => {
-    const colors: Record<CubeColor, { bg: string; border: string }> = {
-      'U': { bg: '#ffffff', border: '#d1d5db' },
-      'R': { bg: '#ef4444', border: '#b91c1c' },
-      'F': { bg: '#22c55e', border: '#15803d' },
-      'D': { bg: '#facc15', border: '#ca8a04' },
-      'L': { bg: '#f97316', border: '#c2410c' },
-      'B': { bg: '#3b82f6', border: '#1d4ed8' },
-    }
-    return colors[color]
-  }
-
-  const Cell = ({ color }: { color: CubeColor }) => {
-    const style = getColorStyle(color)
-    return (
-      <div
-        style={{
-          width: cellSize,
-          height: cellSize,
-          backgroundColor: style.bg,
-          border: `1px solid ${style.border}`,
-          boxSizing: 'border-box',
-        }}
-      />
-    )
-  }
-
-  const MiniFace = ({ face }: { face: CubeColor[][] }) => (
-    <div style={{
-      display: 'grid',
-      gridTemplateColumns: `repeat(3, ${cellSize}px)`,
-      gridTemplateRows: `repeat(3, ${cellSize}px)`,
-      gap: '0.5px',
-      backgroundColor: '#e5e7eb',
-    }}>
-      {face.map((row, rowIndex) =>
-        row.map((color, colIndex) => (
-          <Cell key={`${rowIndex}-${colIndex}`} color={color} />
-        ))
-      )}
-    </div>
-  )
-
-  return (
-    <>
-      {faces.map((face, idx) => (
-        <div key={labels[idx]} style={{ display: 'flex' }}>
-          <span style={{ width: labelWidth, fontSize: 8, color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{labels[idx]}</span>
-          <MiniFace face={face} />
-        </div>
-      ))}
-    </>
   )
 }
 
@@ -251,29 +195,36 @@ function MiniFaceRow({ faces, labels }: { faces: CubeColor[][][]; labels: string
  * 颜色图例
  */
 export function ColorLegend() {
-  const legendStyle: Record<CubeColor, { bg: string; name: string }> = {
-    'U': { bg: '#ffffff', name: '白' },
-    'R': { bg: '#ef4444', name: '红' },
-    'F': { bg: '#22c55e', name: '绿' },
-    'D': { bg: '#facc15', name: '黄' },
-    'L': { bg: '#f97316', name: '橙' },
-    'B': { bg: '#3b82f6', name: '蓝' },
-  }
+  const legendItems: { key: CubeColor; bg: string; name: string }[] = [
+    { key: 'U', bg: '#ffffff', name: '白 (上)' },
+    { key: 'D', bg: '#facc15', name: '黄 (下)' },
+    { key: 'F', bg: '#22c55e', name: '绿 (前)' },
+    { key: 'B', bg: '#3b82f6', name: '蓝 (后)' },
+    { key: 'R', bg: '#ef4444', name: '红 (右)' },
+    { key: 'L', bg: '#f97316', name: '橙 (左)' },
+  ]
 
   return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', justifyContent: 'center' }}>
-      {(Object.entries(legendStyle) as [CubeColor, { bg: string; name: string }][]).map(([key, { bg, name }]) => (
-        <div key={key} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+    <div style={{ 
+      display: 'flex', 
+      flexWrap: 'wrap', 
+      gap: 12, 
+      justifyContent: 'center',
+      padding: '8px 0',
+    }}>
+      {legendItems.map(({ key, bg, name }) => (
+        <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <div
             style={{
-              width: 12,
-              height: 12,
+              width: 16,
+              height: 16,
               backgroundColor: bg,
-              border: '1px solid rgba(0,0,0,0.1)',
-              borderRadius: '2px',
+              border: '1px solid rgba(0,0,0,0.15)',
+              borderRadius: 3,
+              boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
             }}
           />
-          <span style={{ fontSize: '10px', color: '#64748b' }}>{name}</span>
+          <span style={{ fontSize: 12, color: '#64748b', fontWeight: 500 }}>{name}</span>
         </div>
       ))}
     </div>
