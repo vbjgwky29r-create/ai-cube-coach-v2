@@ -8,7 +8,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import OpenAI from 'openai'
 
-const client = new OpenAI()
+// 延迟初始化 OpenAI 客户端，避免构建时报错
+let client: OpenAI | null = null
+
+function getOpenAIClient(): OpenAI {
+  if (!client) {
+    client = new OpenAI()
+  }
+  return client
+}
 
 interface CFOPSolution {
   cross: {
@@ -129,7 +137,7 @@ async function generateCFOPSolution(scramble: string): Promise<CFOPSolution> {
 3. 使用常见的 F2L、OLL、PLL 公式
 4. 只输出 JSON，不要有其他文字`
 
-  const response = await client.chat.completions.create({
+  const response = await getOpenAIClient().chat.completions.create({
     model: 'gpt-4.1-mini',
     messages: [
       { role: 'system', content: systemPrompt },
