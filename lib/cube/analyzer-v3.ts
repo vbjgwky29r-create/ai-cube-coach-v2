@@ -629,15 +629,19 @@ function recognizeOLLCase(ollMoves: Move[]): OLLRecognition | undefined {
   }
 
   // 默认情况
+  // 标准 OLL 公式平均 9 步，但用户可能使用 COLL/Winter Variation 等高级技巧
+  const standardOLLSteps = 9
+  const isAdvancedTechnique = steps < 6 // 少于 6 步可能是 COLL 或跳过了 OLL
+  
   return {
     caseNumber: 0,
-    caseName: '自定义OLL',
-    pattern: '2-look OLL或层先法',
+    caseName: isAdvancedTechnique ? '高级技巧 (可能是COLL/WV)' : '自定义OLL',
+    pattern: isAdvancedTechnique ? '使用了高级公式，跳过或合并了标准OLL步骤' : '2-look OLL或层先法',
     edgesOriented: steps < 15,
     cornersOriented: steps < 20,
     userSteps: steps,
-    optimalSteps: 10,
-    recommended: {
+    optimalSteps: isAdvancedTechnique ? steps : standardOLLSteps, // 高级技巧时不显示更高的"最优"
+    recommended: isAdvancedTechnique ? undefined : {
       notation: 'R U R\' U R U2 R\'', // Sune作为默认推荐
       name: 'Sune (鱼形公式)',
       steps: 7,
@@ -674,14 +678,18 @@ function recognizePLLCase(pllMoves: Move[]): PLLRecognition | undefined {
   }
 
   // 默认情况
+  // 标准 PLL 公式平均 12 步，但用户可能使用 ZBLL 等高级技巧
+  const standardPLLSteps = 12
+  const isAdvancedTechnique = steps < 7 // 少于 7 步可能是 ZBLL 或跳过了部分步骤
+  
   return {
     caseNumber: 0,
-    caseName: '自定义PLL',
-    pattern: '可能使用2-look PLL',
+    caseName: isAdvancedTechnique ? '高级技巧 (可能是ZBLL)' : '自定义PLL',
+    pattern: isAdvancedTechnique ? '使用了高级公式，跳过或合并了标准PLL步骤' : '可能使用2-look PLL',
     permutation: '未知',
     userSteps: steps,
-    optimalSteps: 12,
-    recommended: {
+    optimalSteps: isAdvancedTechnique ? steps : standardPLLSteps, // 高级技巧时不显示更高的"最优"
+    recommended: isAdvancedTechnique ? undefined : {
       notation: 'R U R\' U\' R\' F R2 U\' R\' U\' R U R\' F\'', // T-Perm作为默认推荐
       name: 'T-Perm',
       steps: 14,
