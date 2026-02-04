@@ -10,8 +10,12 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "弘弈AI魔方教练",
-  description: "AI驱动的魔方学习平台，不是帮你解，而是教你怎么解得更好。输入你的解法，AI帮你分析并优化。",
+  title: "弘弈AI魔方 - AI驱动的魔方学习平台",
+  description: "不帮你解，教你更快。AI 分析你的解法，精准定位优化空间",
+  icons: {
+    icon: "/favicon.png",
+    apple: "/logo.png",
+  },
 };
 
 export default function RootLayout({

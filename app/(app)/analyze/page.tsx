@@ -181,7 +181,7 @@ export default function AnalyzePage() {
             <Sparkles className="w-6 h-6 sm:w-7 sm:h-7 text-orange-500" />
             <h1 className="text-2xl sm:text-3xl font-bold gradient-text">解法分析</h1>
           </div>
-          <p className="text-slate-500 text-sm">输入打乱公式和你的解法，AI帮你找出优化空间</p>
+          <p className="text-slate-500 text-sm">AI 分析 · 精准优化</p>
         </div>
 
         {/* 主要内容区域 */}
@@ -239,7 +239,7 @@ export default function AnalyzePage() {
             <Card className="card-cube shadow-sm">
               <CardContent className="py-6 text-center">
                 <Box className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-                <p className="text-sm text-slate-500 mb-3">输入打乱公式后，点击"生成展开图"查看魔方状态</p>
+                <p className="text-sm text-slate-500 mb-3">输入打乱公式，生成展开图</p>
                 {showCubeNet === false && (
                   <Button
                     variant="outline"
@@ -885,15 +885,15 @@ export default function AnalyzePage() {
                 <div className="grid gap-4 sm:grid-cols-3">
                   <div className="p-4 rounded-xl bg-gradient-to-br from-orange-50 to-transparent border border-orange-100">
                     <div className="text-2xl mb-2">1️⃣</div>
-                    <p className="text-sm text-slate-600">输入打乱公式，点击"生成展开图"查看魔方状态</p>
+                    <p className="text-sm text-slate-600">输入打乱公式</p>
                   </div>
                   <div className="p-4 rounded-xl bg-gradient-to-br from-blue-50 to-transparent border border-blue-100">
                     <div className="text-2xl mb-2">2️⃣</div>
-                    <p className="text-sm text-slate-600">输入你的解法步骤，使用虚拟键盘快速输入</p>
+                    <p className="text-sm text-slate-600">输入你的解法</p>
                   </div>
                   <div className="p-4 rounded-xl bg-gradient-to-br from-purple-50 to-transparent border border-purple-100">
                     <div className="text-2xl mb-2">3️⃣</div>
-                    <p className="text-sm text-slate-600">点击"开始分析"查看AI分析结果和优化建议</p>
+                    <p className="text-sm text-slate-600">AI 分析优化建议</p>
                   </div>
                 </div>
               </CardContent>
