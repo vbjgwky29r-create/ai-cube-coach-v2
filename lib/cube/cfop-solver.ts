@@ -17,6 +17,7 @@
 
 import { applyScramble, applyMove, type CubeState } from './cube-state'
 import { parseFormula, type Move } from './parser'
+import { PieceDetectorV2 } from './piece-detector-v2'
 
 // ============================================================
 // 类型定义
@@ -66,6 +67,7 @@ class CrossSolver {
   private moves = ['U', 'U\'', 'U2', 'R', 'R\'', 'R2', 'L', 'L\'', 'L2', 'F', 'F\'', 'F2', 'B', 'B\'', 'B2', 'D', 'D\'', 'D2']
   private startTime = 0
   private timeoutMs = 5000 // 5秒超时
+  private pieceDetector = new PieceDetectorV2()
   
   /**
    * 求解 Cross
@@ -165,29 +167,7 @@ class CrossSolver {
    * 检查 Cross 是否完成
    */
   private isCrossComplete(state: CubeState): boolean {
-    // 检查底层（D面）的4个棱块是否归位
-    // D面中心是 D5（索引4）
-    // 4个棱块是 D2(1), D4(3), D6(5), D8(7)
-    const dFace = state.D
-    const centerColor = dFace[1][1]
-    
-    // 检查4个棱块颜色是否与中心相同
-    if (dFace[0][1] !== centerColor || dFace[1][0] !== centerColor || 
-        dFace[1][2] !== centerColor || dFace[2][1] !== centerColor) {
-      return false
-    }
-    
-    // 检查侧面的棱块是否与对应面的中心颜色匹配
-    // F面底部棱块 (F8) 应该与 F面中心 (F5) 颜色相同
-    if (state.F[2][1] !== state.F[1][1]) return false
-    // R面底部棱块 (R8) 应该与 R面中心 (R5) 颜色相同
-    if (state.R[2][1] !== state.R[1][1]) return false
-    // B面底部棱块 (B8) 应该与 B面中心 (B5) 颜色相同
-    if (state.B[2][1] !== state.B[1][1]) return false
-    // L面底部棱块 (L8) 应该与 L面中心 (L5) 颜色相同
-    if (state.L[2][1] !== state.L[1][1]) return false
-    
-    return true
+    return this.pieceDetector.isCrossComplete(state)
   }
   
   /**
