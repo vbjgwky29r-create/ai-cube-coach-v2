@@ -6,7 +6,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import OpenAI from 'openai'
 
-const client = new OpenAI()
+// 延迟初始化 OpenAI 客户端，避免构建时报错
+let client: OpenAI | null = null
+
+function getOpenAIClient(): OpenAI {
+  if (!client) {
+    client = new OpenAI()
+  }
+  return client
+}
 
 /**
  * 后处理：修正常见的 OCR 识别错误
@@ -63,7 +71,7 @@ export async function POST(request: NextRequest) {
       : `data:image/png;base64,${image}`
 
     // 调用 OpenAI Vision API
-    const response = await client.chat.completions.create({
+    const response = await getOpenAIClient().chat.completions.create({
       model: 'gpt-4.1-mini',
       messages: [
         {
