@@ -214,7 +214,11 @@ export default function AnalyzePage() {
                 {optimalResult && optimalResult.optimalSolution && (
                   <div className="mt-4 pt-4 border-t border-slate-100">
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-medium text-slate-700">最优解 ({optimalResult.steps} 步)</span>
+                      <div className="flex items-center gap-2">
+                        <Zap className="w-4 h-4 text-orange-500" />
+                        <span className="text-sm font-semibold text-slate-800">最优解</span>
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 font-medium">{optimalResult.steps} 步</span>
+                      </div>
                       <Button
                         variant="ghost"
                         size="sm"
@@ -225,9 +229,10 @@ export default function AnalyzePage() {
                         {copiedField === 'optimal' ? '已复制' : '复制'}
                       </Button>
                     </div>
-                    <div className="bg-slate-50 rounded-lg p-3 font-mono text-sm text-slate-700 break-all leading-relaxed">
+                    <div className="bg-gradient-to-br from-orange-50 to-amber-50 border border-orange-200 rounded-lg p-3 font-mono text-sm text-slate-800 break-all leading-relaxed shadow-sm">
                       {optimalResult.optimalSolution}
                     </div>
+                    <p className="text-xs text-slate-500 mt-2">基于 CFOP、ZB、COLL 等高级公式生成</p>
                   </div>
                 )}
               </CardContent>
@@ -239,7 +244,7 @@ export default function AnalyzePage() {
             <Card className="card-cube shadow-sm">
               <CardContent className="py-6 text-center">
                 <Box className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-                <p className="text-sm text-slate-500 mb-3">输入打乱公式，生成展开图</p>
+                <p className="text-sm text-slate-500 mb-3">输入打乱公式，生成最优解和展开图</p>
                 {showCubeNet === false && (
                   <Button
                     variant="outline"
@@ -298,7 +303,7 @@ export default function AnalyzePage() {
                       disabled={generatingOptimal || !scramble.trim()}
                       className="h-7 px-3 text-xs bg-orange-500 hover:bg-orange-600"
                     >
-                      {generatingOptimal ? '生成中...' : '生成展开图'}
+                      {generatingOptimal ? '生成中...' : '生成最优解'}
                     </Button>
                   </div>
                 </div>
