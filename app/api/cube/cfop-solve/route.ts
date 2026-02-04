@@ -13,12 +13,17 @@ let client: OpenAI | null = null
 
 function getOpenAIClient(): OpenAI {
   if (!client) {
-    const apiKey = process.env.OPENAI_API_KEY
-    console.log('[CFOP] Initializing OpenAI client, API key exists:', !!apiKey)
+    const apiKey = process.env.VOLCENGINE_API_KEY || process.env.OPENAI_API_KEY
+    const baseURL = process.env.VOLCENGINE_BASE_URL || 'https://ark.cn-beijing.volces.com/api/v3'
+    console.log('[CFOP] Initializing client, API key exists:', !!apiKey)
+    console.log('[CFOP] Base URL:', baseURL)
     if (!apiKey) {
-      throw new Error('OPENAI_API_KEY environment variable is not set')
+      throw new Error('VOLCENGINE_API_KEY or OPENAI_API_KEY environment variable is not set')
     }
-    client = new OpenAI({ apiKey })
+    client = new OpenAI({ 
+      apiKey,
+      baseURL 
+    })
   }
   return client
 }
@@ -144,8 +149,11 @@ async function generateCFOPSolution(scramble: string): Promise<CFOPSolution> {
 3. 使用常见的 F2L、OLL、PLL 公式
 4. 只输出 JSON，不要有其他文字`
 
+  const model = process.env.VOLCENGINE_MODEL || 'gpt-4.1-mini'
+  console.log('[CFOP] Using model:', model)
+  
   const response = await getOpenAIClient().chat.completions.create({
-    model: 'gpt-4.1-mini',
+    model,
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt }
