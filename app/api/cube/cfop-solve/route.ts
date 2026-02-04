@@ -151,7 +151,10 @@ async function callVolcengineAPI(
   const baseURL = 'https://ark.cn-beijing.volces.com/api/v3'
   
   try {
-    const response = await fetch(`${baseURL}/chat/completions`, {
+    console.log('[CFOP] Calling Volcengine API with model:', model)
+    
+    // 火山引擎使用 /responses 端点和 input 格式
+    const response = await fetch(`${baseURL}/responses`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
@@ -159,12 +162,17 @@ async function callVolcengineAPI(
       },
       body: JSON.stringify({
         model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ],
-        temperature: 0.3,
-        max_tokens: 2000,
+        input: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'input_text',
+                text: `${systemPrompt}\n\n${userPrompt}`
+              }
+            ]
+          }
+        ]
       }),
     })
 
@@ -175,7 +183,10 @@ async function callVolcengineAPI(
     }
 
     const data = await response.json()
-    const content = data.choices?.[0]?.message?.content || ''
+    console.log('[CFOP] Volcengine API response:', JSON.stringify(data).substring(0, 200))
+    
+    // 火山引擎的响应格式
+    const content = data.output?.content?.[0]?.text || data.choices?.[0]?.message?.content || ''
     
     return parseAIResponse(content)
   } catch (error) {
