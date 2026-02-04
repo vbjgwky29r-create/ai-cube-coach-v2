@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { CubeKeyboard } from '@/components/cube/cube-keyboard'
 import { CubeNet, ColorLegend } from '@/components/cube/cube-net'
-import { Sparkles, Zap, Trophy, Target, Box, ChevronDown, ChevronUp, MapPin, Clock, TrendingUp, Fingerprint, AlertCircle, Copy, Check } from 'lucide-react'
+import { Sparkles, Zap, Trophy, Target, Box, ChevronDown, ChevronUp, MapPin, Clock, TrendingUp, Fingerprint, AlertCircle, Copy, Check, Camera, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { unflattenCubeState, type CubeState } from '@/lib/cube/cube-state'
 
@@ -22,6 +22,12 @@ export default function AnalyzePage() {
   const [copiedField, setCopiedField] = useState<string | null>(null)
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [_optimalError, setOptimalError] = useState<string | null>(null)
+  
+  // OCR 相关状态
+  const [ocrLoading, setOcrLoading] = useState(false)
+  const [ocrResult, setOcrResult] = useState<{ scramble: string; solution: string } | null>(null)
+  const [showOcrPreview, setShowOcrPreview] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   
   const inputAreaRef = useRef<HTMLDivElement>(null)
   const scrambleRef = useRef<HTMLDivElement>(null)
@@ -137,6 +143,80 @@ export default function AnalyzePage() {
     handleKeyboardInput(' ')
   }
 
+  // OCR 截图识别处理
+  const handleOcrUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setOcrLoading(true)
+    setOcrResult(null)
+
+    try {
+      // 读取文件为 base64
+      const reader = new FileReader()
+      reader.onload = async () => {
+        const base64 = (reader.result as string).split(',')[1]
+        
+        try {
+          const response = await fetch('/api/ocr/cube-formula', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image: base64 }),
+          })
+
+          if (!response.ok) {
+            throw new Error('识别失败')
+          }
+
+          const data = await response.json()
+          
+          if (data.scramble || data.solution) {
+            setOcrResult({
+              scramble: data.scramble || '',
+              solution: data.solution || ''
+            })
+            setShowOcrPreview(true)
+          } else {
+            alert('未能识别到公式，请确保截图包含打乱公式或复原公式')
+          }
+        } catch (err) {
+          console.error('OCR 请求失败:', err)
+          alert('识别失败，请重试')
+        } finally {
+          setOcrLoading(false)
+        }
+      }
+      reader.readAsDataURL(file)
+    } catch (err) {
+      console.error('文件读取失败:', err)
+      setOcrLoading(false)
+      alert('文件读取失败')
+    }
+
+    // 清空 input 以便可以重复选择同一文件
+    e.target.value = ''
+  }
+
+  // 确认并应用 OCR 结果
+  const applyOcrResult = () => {
+    if (ocrResult) {
+      if (ocrResult.scramble) {
+        setScramble(ocrResult.scramble)
+      }
+      if (ocrResult.solution) {
+        setSolution(ocrResult.solution)
+      }
+      setShowOcrPreview(false)
+      setOcrResult(null)
+    }
+  }
+
+  // 取消 OCR 结果
+  const cancelOcrResult = () => {
+    setShowOcrPreview(false)
+    setOcrResult(null)
+  }
+
   const copyToClipboard = async (text: string, field: string) => {
     try {
       await navigator.clipboard.writeText(text)
@@ -182,7 +262,95 @@ export default function AnalyzePage() {
             <h1 className="text-2xl sm:text-3xl font-bold gradient-text">解法分析</h1>
           </div>
           <p className="text-slate-500 text-sm">AI 分析 · 精准优化</p>
+          
+          {/* 截图识别按钮 */}
+          <div className="mt-4">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleOcrUpload}
+              className="hidden"
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={ocrLoading}
+              className="gap-2 border-blue-200 text-blue-600 hover:bg-blue-50 hover:border-blue-300"
+            >
+              {ocrLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  识别中...
+                </>
+              ) : (
+                <>
+                  <Camera className="w-4 h-4" />
+                  上传魔方星球截图
+                </>
+              )}
+            </Button>
+          </div>
         </div>
+
+        {/* OCR 识别结果预览弹窗 */}
+        {showOcrPreview && ocrResult && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <Card className="w-full max-w-lg shadow-2xl">
+              <CardHeader className="border-b border-slate-100">
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <Camera className="w-5 h-5 text-blue-500" />
+                  识别结果预览
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="py-4 space-y-4">
+                <p className="text-sm text-slate-500">请检查识别结果，可以直接编辑修正错误</p>
+                
+                {/* 打乱公式 */}
+                <div>
+                  <label className="text-sm font-medium text-slate-700 mb-1 block">🎲 打乱公式</label>
+                  <textarea
+                    value={ocrResult.scramble}
+                    onChange={(e) => setOcrResult({ ...ocrResult, scramble: e.target.value })}
+                    className="w-full p-3 border border-slate-200 rounded-lg font-mono text-sm resize-none focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent"
+                    rows={2}
+                    placeholder="未识别到打乱公式"
+                  />
+                </div>
+                
+                {/* 复原公式 */}
+                <div>
+                  <label className="text-sm font-medium text-slate-700 mb-1 block">✨ 复原公式</label>
+                  <textarea
+                    value={ocrResult.solution}
+                    onChange={(e) => setOcrResult({ ...ocrResult, solution: e.target.value })}
+                    className="w-full p-3 border border-slate-200 rounded-lg font-mono text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
+                    rows={4}
+                    placeholder="未识别到复原公式"
+                  />
+                </div>
+                
+                {/* 操作按钮 */}
+                <div className="flex gap-3 pt-2">
+                  <Button
+                    variant="outline"
+                    onClick={cancelOcrResult}
+                    className="flex-1"
+                  >
+                    取消
+                  </Button>
+                  <Button
+                    onClick={applyOcrResult}
+                    className="flex-1 bg-blue-500 hover:bg-blue-600"
+                  >
+                    确认并应用
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
 
         {/* 主要内容区域 */}
         <div className="space-y-4">
