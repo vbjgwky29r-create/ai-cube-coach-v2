@@ -497,7 +497,8 @@ export default function AnalyzePage() {
                         setScramble('')
                         setOptimalResult(null)
                       }}
-                      className="absolute right-2 top-2 w-6 h-6 rounded-full bg-slate-200 hover:bg-slate-300 flex items-center justify-center text-slate-500 hover:text-slate-700 transition-colors"
+                      className="absolute right-2 top-2 w-5 h-5 rounded-full bg-slate-200 hover:bg-slate-300 flex items-center justify-center text-slate-500 hover:text-slate-700 transition-colors text-xs"
+                      title="清空"
                     >
                       ✕
                     </button>
@@ -558,7 +559,8 @@ export default function AnalyzePage() {
                         e.stopPropagation()
                         setSolution('')
                       }}
-                      className="absolute right-2 top-2 w-6 h-6 rounded-full bg-slate-200 hover:bg-slate-300 flex items-center justify-center text-slate-500 hover:text-slate-700 transition-colors"
+                      className="absolute right-2 top-2 w-5 h-5 rounded-full bg-slate-200 hover:bg-slate-300 flex items-center justify-center text-slate-500 hover:text-slate-700 transition-colors text-xs"
+                      title="清空"
                     >
                       ✕
                     </button>
