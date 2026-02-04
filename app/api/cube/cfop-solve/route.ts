@@ -1,32 +1,11 @@
 /**
  * AI CFOP 解法 API
  * 
- * 使用 OpenAI API 生成符合人类思维的 CFOP 解法
+ * 使用 AI API 生成符合人类思维的 CFOP 解法
  * 包含 Cross → F2L → OLL → PLL 四个阶段
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import OpenAI from 'openai'
-
-// 延迟初始化 OpenAI 客户端，避免构建时报错
-let client: OpenAI | null = null
-
-function getOpenAIClient(): OpenAI {
-  if (!client) {
-    const apiKey = process.env.VOLCENGINE_API_KEY || process.env.OPENAI_API_KEY
-    const baseURL = process.env.VOLCENGINE_BASE_URL || 'https://ark.cn-beijing.volces.com/api/v3'
-    console.log('[CFOP] Initializing client, API key exists:', !!apiKey)
-    console.log('[CFOP] Base URL:', baseURL)
-    if (!apiKey) {
-      throw new Error('VOLCENGINE_API_KEY or OPENAI_API_KEY environment variable is not set')
-    }
-    client = new OpenAI({ 
-      apiKey,
-      baseURL 
-    })
-  }
-  return client
-}
 
 interface CFOPSolution {
   cross: {
@@ -149,11 +128,77 @@ async function generateCFOPSolution(scramble: string): Promise<CFOPSolution> {
 3. 使用常见的 F2L、OLL、PLL 公式
 4. 只输出 JSON，不要有其他文字`
 
-  const model = process.env.VOLCENGINE_MODEL || 'gpt-4.1-mini'
-  console.log('[CFOP] Using model:', model)
+  // 检查是否使用火山引擎 API
+  const volcengineApiKey = process.env.VOLCENGINE_API_KEY
+  const volcengineModel = process.env.VOLCENGINE_MODEL
   
-  const response = await getOpenAIClient().chat.completions.create({
-    model,
+  if (volcengineApiKey && volcengineModel) {
+    console.log('[CFOP] Using Volcengine API')
+    return await callVolcengineAPI(systemPrompt, userPrompt, volcengineApiKey, volcengineModel)
+  }
+  
+  // 否则使用 OpenAI API
+  console.log('[CFOP] Using OpenAI API')
+  return await callOpenAIAPI(systemPrompt, userPrompt)
+}
+
+async function callVolcengineAPI(
+  systemPrompt: string,
+  userPrompt: string,
+  apiKey: string,
+  model: string
+): Promise<CFOPSolution> {
+  const baseURL = 'https://ark.cn-beijing.volces.com/api/v3'
+  
+  try {
+    const response = await fetch(`${baseURL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        temperature: 0.3,
+        max_tokens: 2000,
+      }),
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      console.error('[CFOP] Volcengine API error:', response.status, errorText)
+      throw new Error(`Volcengine API error: ${response.status} ${errorText}`)
+    }
+
+    const data = await response.json()
+    const content = data.choices?.[0]?.message?.content || ''
+    
+    return parseAIResponse(content)
+  } catch (error) {
+    console.error('[CFOP] Volcengine API call failed:', error)
+    throw error
+  }
+}
+
+async function callOpenAIAPI(
+  systemPrompt: string,
+  userPrompt: string
+): Promise<CFOPSolution> {
+  const OpenAI = (await import('openai')).default
+  const apiKey = process.env.OPENAI_API_KEY
+  
+  if (!apiKey) {
+    throw new Error('OPENAI_API_KEY environment variable is not set')
+  }
+
+  const client = new OpenAI({ apiKey })
+  
+  const response = await client.chat.completions.create({
+    model: 'gpt-4.1-mini',
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt }
@@ -163,8 +208,10 @@ async function generateCFOPSolution(scramble: string): Promise<CFOPSolution> {
   })
 
   const content = response.choices[0]?.message?.content || ''
-  
-  // 解析 JSON
+  return parseAIResponse(content)
+}
+
+function parseAIResponse(content: string): CFOPSolution {
   try {
     // 尝试提取 JSON（可能被包裹在 markdown 代码块中）
     let jsonStr = content
