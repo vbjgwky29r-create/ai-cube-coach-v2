@@ -68,6 +68,9 @@ importers:
       react-dom:
         specifier: 19.2.3
         version: 19.2.3(react@19.2.3)
+      rubiks-cube-solver:
+        specifier: ^1.2.0
+        version: 1.2.0
       tailwind-merge:
         specifier: ^3.4.0
         version: 3.4.0
@@ -984,6 +987,9 @@ packages:
     resolution: {integrity: sha512-LHE+8BuR7RYGDKvnrmcuSq3tDcKv9OFEXQt/HpbZhY7V6h0zlUXutnAD82GiFx9rdieCMjkvtcsPqBwgUl1Iiw==}
     engines: {node: '>= 0.4'}
 
+  array-element-combiner@1.0.0:
+    resolution: {integrity: sha512-mBOJ8Q5Shs6ZEjsrvKpBH9u9wirFt4HkzfAaLxeY7lvb5WIp7ZJsK5tlutRrMjMER+FJV0uY5G+tWyUXJjnLKw==}
+
   array-includes@3.1.9:
     resolution: {integrity: sha512-FmeCCAenzH0KH381SPT5FZmiA/TmpndpcaShhfgEN9eCVjnFBqq3l1xrI42y8+PPLI6hypzou4GXw00WHmPBLQ==}
     engines: {node: '>= 0.4'}
@@ -1780,6 +1786,9 @@ packages:
   giget@2.0.0:
     resolution: {integrity: sha512-L5bGsVkxJbJgdnwyuheIunkGatUF/zssUoxxjACCseZYAVbaqdh9Tsmmlkl8vYan09H7sbvKt4pS8GqKLBrEzA==}
     hasBin: true
+
+  gl-vec3@1.2.0:
+    resolution: {integrity: sha512-ynW7j5ZshRTHXG5UPC5u6G52cBCNx53LbNlq2HQ1bAosZbO4wOCEBufXS7KGiKL1slMgy4j/77Ikt+vMznouLg==}
 
   glob-parent@5.1.2:
     resolution: {integrity: sha512-AOIgSQCepiJYwP3ARnGx+5VnTu2HBYdzbGP45eLw1vr3zB3vZLeyed1sC9hnbcOc9/SrMyM5RPQrkGz4aS9Zow==}
@@ -2625,6 +2634,9 @@ packages:
   reusify@1.1.0:
     resolution: {integrity: sha512-g6QUff04oZpHs0eG5p83rFLhHeV00ug/Yf9nZM6fLeUrPguBTkTQOdpAWWspMh55TZfVQDPaN3NQJfbVRAxdIw==}
     engines: {iojs: '>=1.0.0', node: '>=0.10.0'}
+
+  rubiks-cube-solver@1.2.0:
+    resolution: {integrity: sha512-3kzz/BggBBJpLHnp1i1qPtDp3WigBBB6dZyI5VzeE4IvkmrtR46aDLUdFeHYYvwhfeUmb4AJcasOyA2eaFI7Bg==}
 
   run-parallel@1.2.0:
     resolution: {integrity: sha512-5l4VyZR86LZ/lDxZTR6jqL8AFE2S0IFLMP26AbjsLVADxHdhB/c0GUsH+y39UfCi3dzz8OlQuPmnaJOMoDHQBA==}
@@ -3748,6 +3760,8 @@ snapshots:
       call-bound: 1.0.4
       is-array-buffer: 3.0.5
 
+  array-element-combiner@1.0.0: {}
+
   array-includes@3.1.9:
     dependencies:
       call-bind: 1.0.8
@@ -4570,6 +4584,8 @@ snapshots:
       nypm: 0.6.4
       pathe: 2.0.3
 
+  gl-vec3@1.2.0: {}
+
   glob-parent@5.1.2:
     dependencies:
       is-glob: 4.0.3
@@ -5300,6 +5316,11 @@ snapshots:
       supports-preserve-symlinks-flag: 1.0.0
 
   reusify@1.1.0: {}
+
+  rubiks-cube-solver@1.2.0:
+    dependencies:
+      array-element-combiner: 1.0.0
+      gl-vec3: 1.2.0
 
   run-parallel@1.2.0:
     dependencies:

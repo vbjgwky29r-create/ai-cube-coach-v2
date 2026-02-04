@@ -29,6 +29,7 @@
     "prisma": "^6.1.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
+    "rubiks-cube-solver": "^1.2.0",
     "tailwind-merge": "^3.4.0",
     "tailwindcss-animate": "^1.0.7",
     "tesseract.js": "^5.1.1"
