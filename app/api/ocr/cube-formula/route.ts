@@ -1,20 +1,9 @@
 /**
  * 魔方公式 OCR 识别 API
- * 使用 OpenAI Vision API 识别魔方星球截图中的公式
+ * 使用火山引擎豆包 API 识别魔方星球截图中的公式
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import OpenAI from 'openai'
-
-// 延迟初始化 OpenAI 客户端，避免构建时报错
-let client: OpenAI | null = null
-
-function getOpenAIClient(): OpenAI {
-  if (!client) {
-    client = new OpenAI()
-  }
-  return client
-}
 
 /**
  * 后处理：修正常见的 OCR 识别错误
@@ -55,7 +44,7 @@ function postProcessFormula(text: string): string {
 
 /**
  * POST /api/ocr/cube-formula
- * 接收图片 base64，使用 OpenAI Vision 识别魔方公式
+ * 接收图片 base64，使用火山引擎 Vision 识别魔方公式
  */
 export async function POST(request: NextRequest) {
   try {
@@ -70,13 +59,31 @@ export async function POST(request: NextRequest) {
       ? image 
       : `data:image/png;base64,${image}`
 
-    // 调用 OpenAI Vision API
-    const response = await getOpenAIClient().chat.completions.create({
-      model: 'gpt-4.1-mini',
-      messages: [
-        {
-          role: 'system',
-          content: `你是一个专业的魔方公式识别专家。你的任务是从魔方星球（Cube Planet）应用的截图中精确提取打乱公式和复原公式。
+    const apiKey = process.env.VOLCENGINE_API_KEY
+    const model = process.env.VOLCENGINE_MODEL || 'ep-20260205011220-2gksn'
+    const baseURL = process.env.VOLCENGINE_BASE_URL || 'https://ark.cn-beijing.volces.com/api/v3'
+
+    if (!apiKey) {
+      throw new Error('Missing VOLCENGINE_API_KEY environment variable')
+    }
+
+    console.log('[OCR] Using Volcengine API')
+    console.log('[OCR] Base URL:', baseURL)
+    console.log('[OCR] Model:', model)
+
+    // 调用火山引擎 Vision API
+    const response = await fetch(`${baseURL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: model,
+        messages: [
+          {
+            role: 'system',
+            content: `你是一个专业的魔方公式识别专家。你的任务是从魔方星球（Cube Planet）应用的截图中精确提取打乱公式和复原公式。
 
 魔方公式使用以下记号：
 - 基础面转动：U, R, F, D, L, B（分别代表上、右、前、下、左、后）
@@ -100,29 +107,36 @@ SCRAMBLE: [打乱公式]
 SOLUTION: [复原公式]
 
 如果某个区域无法识别，输出 SCRAMBLE: 或 SOLUTION: 后留空。`
-        },
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: '请识别这张魔方星球截图中的打乱公式和复原公式。注意区分 \' (撇号) 和 2 (数字二)。'
-            },
-            {
-              type: 'image_url',
-              image_url: {
-                url: imageUrl,
-                detail: 'high'
+          },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: '请识别这张魔方星球截图中的打乱公式和复原公式。注意区分 \' (撇号) 和 2 (数字二)。'
+              },
+              {
+                type: 'image_url',
+                image_url: {
+                  url: imageUrl
+                }
               }
-            }
-          ]
-        }
-      ],
-      max_tokens: 1000,
-      temperature: 0.1 // 低温度以获得更稳定的输出
+            ]
+          }
+        ],
+        max_tokens: 1000,
+        temperature: 0.1
+      })
     })
 
-    const content = response.choices[0]?.message?.content || ''
+    if (!response.ok) {
+      const errorText = await response.text()
+      console.error('[OCR] Volcengine API error:', response.status, errorText)
+      throw new Error(`Volcengine API error: ${response.status} ${errorText}`)
+    }
+
+    const data = await response.json()
+    const content = data.choices?.[0]?.message?.content || ''
     
     // 解析响应
     const scrambleMatch = content.match(/SCRAMBLE:\s*(.*)/)
