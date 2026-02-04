@@ -1,8 +1,11 @@
 /**
- * 魔方状态模拟器 - 修复版
+ * 魔方状态模拟器 - 使用 cubejs 库
  *
  * 使用标准配色：白顶绿前
  */
+
+// @ts-ignore
+import Cube from 'cubejs'
 
 // 颜色定义
 export type CubeColor = 'U' | 'R' | 'F' | 'D' | 'L' | 'B'
@@ -92,291 +95,92 @@ export function cloneCube(state: CubeState): CubeState {
   }
 }
 
-// ==================== 面旋转函数 ====================
-
-function rotateFaceCW(face: CubeColor[][]): CubeColor[][] {
-  return [
-    [face[2][0], face[1][0], face[0][0]],
-    [face[2][1], face[1][1], face[0][1]],
-    [face[2][2], face[1][2], face[0][2]],
-  ]
-}
-
-function rotateFaceCCW(face: CubeColor[][]): CubeColor[][] {
-  return [
-    [face[0][2], face[1][2], face[2][2]],
-    [face[0][1], face[1][1], face[2][1]],
-    [face[0][0], face[1][0], face[2][0]],
-  ]
-}
-
-function rotateFace180(face: CubeColor[][]): CubeColor[][] {
-  return [
-    [face[2][2], face[2][1], face[2][0]],
-    [face[1][2], face[1][1], face[1][0]],
-    [face[0][2], face[0][1], face[0][0]],
-  ]
-}
-
-// ==================== 相邻面旋转函数 ====================
-
-/*
- * 展开图结构：
- *     U
- *   L F R B
- *     D
- *
- * U 顺时针旋转（从上往下看）：F→L→B→R→F
- * D 顺时针旋转（从下往上看）：F→R→B→L→F
- * F 顺时针旋转（从前往后看）：U→R→D→L→U
- * B 顺时针旋转（从后往前看）：U→L→D→R→U
- * R 顺时针旋转（从右往左看）：U→B→D→F→U
- * L 顺时针旋转（从左往右看）：U→F→D→B→U
- */
-
-// U 面旋转 - 从上往下看，顺时针：F→L→B→R→F
-function rotateU(state: CubeState, times: number): void {
-  for (let t = 0; t < times; t++) {
-    const temp = [...state.F[0]]
-    state.F[0] = [...state.R[0]]
-    state.R[0] = [...state.B[0]]
-    state.B[0] = [...state.L[0]]
-    state.L[0] = temp
-  }
-}
-
-// D 面旋转 - 从下往上看，顺时针：F→R→B→L→F
-function rotateD(state: CubeState, times: number): void {
-  for (let t = 0; t < times; t++) {
-    const temp = [...state.F[2]]
-    state.F[2] = [...state.L[2]]
-    state.L[2] = [...state.B[2]]
-    state.B[2] = [...state.R[2]]
-    state.R[2] = temp
-  }
-}
-
-// F 面旋转 - 从前往后看，顺时针：U→R→D→L→U
-function rotateF(state: CubeState, times: number): void {
-  for (let t = 0; t < times; t++) {
-    // U底行 -> R左列 -> D顶行 -> L右列 -> U底行
-    const tempU = [state.U[2][0], state.U[2][1], state.U[2][2]]
-
-    // U ← L右列（倒序）
-    state.U[2][0] = state.L[2][2]
-    state.U[2][1] = state.L[1][2]
-    state.U[2][2] = state.L[0][2]
-
-    // L右列 ← D顶行
-    state.L[0][2] = state.D[0][0]
-    state.L[1][2] = state.D[0][1]
-    state.L[2][2] = state.D[0][2]
-
-    // D顶行 ← R左列（倒序）
-    state.D[0][0] = state.R[2][0]
-    state.D[0][1] = state.R[1][0]
-    state.D[0][2] = state.R[0][0]
-
-    // R左列 ← U底行
-    state.R[0][0] = tempU[0]
-    state.R[1][0] = tempU[1]
-    state.R[2][0] = tempU[2]
-  }
-}
-
-// B 面旋转 - 从后往前看，顺时针：U→L→D→R→U
-function rotateB(state: CubeState, times: number): void {
-  for (let t = 0; t < times; t++) {
-    // U顶行 -> L左列 -> D底行 -> R右列 -> U顶行
-    const tempU = [state.U[0][0], state.U[0][1], state.U[0][2]]
-
-    // U ← R右列（倒序）
-    state.U[0][0] = state.R[0][2]
-    state.U[0][1] = state.R[1][2]
-    state.U[0][2] = state.R[2][2]
-
-    // R右列 ← D底行（倒序）
-    state.R[0][2] = state.D[2][2]
-    state.R[1][2] = state.D[2][1]
-    state.R[2][2] = state.D[2][0]
-
-    // D底行 ← L左列
-    state.D[2][0] = state.L[0][0]
-    state.D[2][1] = state.L[1][0]
-    state.D[2][2] = state.L[2][0]
-
-    // L左列 ← U顶行
-    state.L[0][0] = tempU[2]
-    state.L[1][0] = tempU[1]
-    state.L[2][0] = tempU[0]
-  }
-}
-
-// R 面旋转 - 从右往左看，顺时针：U→B→D→F→U
-function rotateR(state: CubeState, times: number): void {
-  for (let t = 0; t < times; t++) {
-    // U右列 -> B左列（倒序）-> D右列 -> F右列 -> U右列
-    const tempU = [state.U[0][2], state.U[1][2], state.U[2][2]]
-
-    // U右列 ← F右列
-    state.U[0][2] = state.F[0][2]
-    state.U[1][2] = state.F[1][2]
-    state.U[2][2] = state.F[2][2]
-
-    // F右列 ← D右列
-    state.F[0][2] = state.D[0][2]
-    state.F[1][2] = state.D[1][2]
-    state.F[2][2] = state.D[2][2]
-
-    // D右列 ← B左列（倒序）
-    state.D[0][2] = state.B[2][0]
-    state.D[1][2] = state.B[1][0]
-    state.D[2][2] = state.B[0][0]
-
-    // B左列 ← U右列（倒序）
-    state.B[0][0] = tempU[2]
-    state.B[1][0] = tempU[1]
-    state.B[2][0] = tempU[0]
-  }
-}
-
-// L 面旋转 - 从左往右看，顺时针：U→F→D→B→U
-function rotateL(state: CubeState, times: number): void {
-  for (let t = 0; t < times; t++) {
-    // U左列 -> F左列 -> D左列 -> B右列（倒序）-> U左列
-    const tempU = [state.U[0][0], state.U[1][0], state.U[2][0]]
-
-    // U左列 ← B右列（倒序）
-    state.U[0][0] = state.B[2][2]
-    state.U[1][0] = state.B[1][2]
-    state.U[2][0] = state.B[0][2]
-
-    // B右列 ← D左列
-    state.B[0][2] = state.D[0][0]
-    state.B[1][2] = state.D[1][0]
-    state.B[2][2] = state.D[2][0]
-
-    // D左列 ← F左列
-    state.D[0][0] = state.F[0][0]
-    state.D[1][0] = state.F[1][0]
-    state.D[2][0] = state.F[2][0]
-
-    // F左列 ← U左列
-    state.F[0][0] = tempU[0]
-    state.F[1][0] = tempU[1]
-    state.F[2][0] = tempU[2]
-  }
-}
-
-// ==================== 应用动作 ====================
-
 /**
- * 应用单步动作到魔方状态
+ * 将 cubejs 状态字符串转换为 CubeState
+ * cubejs 格式：UUUUUUUUURRRRRRRRFFFFFFFFDDDDDDDDLLLLLLLLBBBBBBBB
+ * 每个面 9 个字符，顺序是 U R F D L B
  */
-export function applyMove(state: CubeState, move: string): CubeState {
-  const newState = cloneCube(state)
-
-  // 解析动作
-  const face = move[0].toUpperCase() as Face
-  const modifier = move.slice(1)
-
-  // 判断旋转次数
-  let times = 1
-  if (modifier.includes('2')) {
-    times = 2
-  } else if (modifier.includes("'")) {
-    times = 3  // 逆时针 = 顺时针3次
+function cubejsStringToState(stateStr: string): CubeState {
+  const parseFace = (str: string): CubeColor[][] => {
+    return [
+      [str[0] as CubeColor, str[1] as CubeColor, str[2] as CubeColor],
+      [str[3] as CubeColor, str[4] as CubeColor, str[5] as CubeColor],
+      [str[6] as CubeColor, str[7] as CubeColor, str[8] as CubeColor],
+    ]
   }
 
-  // 旋转面本身
-  for (let t = 0; t < times; t++) {
-    newState[face] = rotateFaceCW(newState[face])
+  return {
+    U: parseFace(stateStr.slice(0, 9)),
+    R: parseFace(stateStr.slice(9, 18)),
+    F: parseFace(stateStr.slice(18, 27)),
+    D: parseFace(stateStr.slice(27, 36)),
+    L: parseFace(stateStr.slice(36, 45)),
+    B: parseFace(stateStr.slice(45, 54)),
   }
-
-  // 旋转相邻边
-  switch (face) {
-    case 'U':
-      rotateU(newState, times)
-      break
-    case 'D':
-      rotateD(newState, times)
-      break
-    case 'F':
-      rotateF(newState, times)
-      break
-    case 'B':
-      rotateB(newState, times)
-      break
-    case 'R':
-      rotateR(newState, times)
-      break
-    case 'L':
-      rotateL(newState, times)
-      break
-  }
-
-  return newState
 }
 
 /**
- * 预处理打乱公式
+ * 预处理打乱公式，转换为 cubejs 可识别的格式
  */
 function preprocessScramble(scramble: string): string {
-  const cleaned = scramble.trim().replace(/\s+/g, '')
-  const result: string[] = []
-
-  let i = 0
-  while (i < cleaned.length) {
-    const char = cleaned[i]
-
-    if (/^[RLUDFBrludfb]$/.test(char)) {
-      if (i + 1 < cleaned.length && (cleaned[i + 1] === "'" || cleaned[i + 1] === "2")) {
-        result.push(char + cleaned[i + 1])
-        i += 2
-      } else {
-        result.push(char)
-        i += 1
-      }
-    } else if (char === "'" || char === '2') {
-      if (result.length > 0) {
-        result[result.length - 1] += char
-      }
-      i += 1
-    } else {
-      i += 1
-    }
-  }
-
-  return result.join(' ')
+  // 移除多余空格，标准化格式
+  return scramble
+    .trim()
+    .replace(/\s+/g, ' ')
+    .replace(/'/g, "'")  // 统一撇号
 }
 
 /**
- * 解析并应用打乱公式
+ * 解析并应用打乱公式 - 使用 cubejs 库
  */
 export function applyScramble(scramble: string): CubeState {
-  let state = createSolvedCube()
-
-  const processed = preprocessScramble(scramble)
-  const moves = processed.split(/\s+/).filter(m => m.length > 0)
-
-  for (const move of moves) {
-    // 跳过转体动作 x y z
-    if (/^[xyz]/i.test(move)) {
-      continue
+  try {
+    // 初始化 cubejs solver（如果需要）
+    if (!Cube.prototype.solve) {
+      Cube.initSolver()
     }
-
-    try {
-      state = applyMove(state, move)
-    } catch (e) {
-      console.warn(`无法应用动作: ${move}`, e)
+    
+    // 创建魔方并应用打乱
+    const cube = new Cube()
+    const processed = preprocessScramble(scramble)
+    
+    if (processed) {
+      cube.move(processed)
     }
+    
+    // 获取状态字符串并转换
+    const stateStr = cube.asString()
+    return cubejsStringToState(stateStr)
+  } catch (error) {
+    console.error('applyScramble error:', error)
+    // 出错时返回还原状态
+    return createSolvedCube()
   }
+}
 
-  return state
+/**
+ * 应用单步动作到魔方状态 - 使用 cubejs 库
+ */
+export function applyMove(state: CubeState, move: string): CubeState {
+  try {
+    // 将当前状态转换为 cubejs 格式
+    const stateStr = flattenCubeState(state)
+    const cube = Cube.fromString(stateStr)
+    
+    // 应用动作
+    cube.move(move)
+    
+    // 返回新状态
+    return cubejsStringToState(cube.asString())
+  } catch (error) {
+    console.error('applyMove error:', error)
+    return cloneCube(state)
+  }
 }
 
 /**
  * 获取魔方状态的扁平数组（用于序列化）
+ * 格式：UUUUUUUUURRRRRRRRFFFFFFFFDDDDDDDDLLLLLLLLBBBBBBBB
  */
 export function flattenCubeState(state: CubeState): string {
   const faces: Face[] = ['U', 'R', 'F', 'D', 'L', 'B']
@@ -399,32 +203,5 @@ export function unflattenCubeState(flat: string): CubeState {
     throw new Error('Invalid flat cube state: must be 54 characters')
   }
 
-  const faces: Face[] = ['U', 'R', 'F', 'D', 'L', 'B']
-  const result: CubeState = {
-    U: createEmptyFace(),
-    R: createEmptyFace(),
-    F: createEmptyFace(),
-    D: createEmptyFace(),
-    L: createEmptyFace(),
-    B: createEmptyFace(),
-  }
-
-  let charIndex = 0
-  for (const face of faces) {
-    for (let row = 0; row < 3; row++) {
-      for (let col = 0; col < 3; col++) {
-        result[face][row][col] = flat[charIndex++] as CubeColor
-      }
-    }
-  }
-
-  return result
-}
-
-function createEmptyFace(): CubeColor[][] {
-  return [
-    ['U', 'U', 'U'],
-    ['U', 'U', 'U'],
-    ['U', 'U', 'U'],
-  ]
+  return cubejsStringToState(flat)
 }

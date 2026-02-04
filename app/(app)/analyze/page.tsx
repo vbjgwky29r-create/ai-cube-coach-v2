@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { CubeKeyboard } from '@/components/cube/cube-keyboard'
 import { CubeNet, ColorLegend } from '@/components/cube/cube-net'
-import { Sparkles, Zap, Trophy, Target, Box, ChevronDown, ChevronUp, MapPin, Clock, TrendingUp, Fingerprint, AlertCircle, Copy, Check, Camera, Loader2 } from 'lucide-react'
+import { Sparkles, Zap, Trophy, Target, Box, ChevronDown, ChevronUp, MapPin, Clock, TrendingUp, Fingerprint, AlertCircle, Copy, Check, Camera, Loader2, Brain, Cpu } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { unflattenCubeState, type CubeState } from '@/lib/cube/cube-state'
 
@@ -22,6 +22,11 @@ export default function AnalyzePage() {
   const [copiedField, setCopiedField] = useState<string | null>(null)
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [_optimalError, setOptimalError] = useState<string | null>(null)
+  
+  // CFOP 解法相关状态
+  const [solveType, setSolveType] = useState<'machine' | 'cfop'>('cfop')
+  const [cfopResult, setCfopResult] = useState<any>(null)
+  const [generatingCfop, setGeneratingCfop] = useState(false)
   
   // OCR 相关状态
   const [ocrLoading, setOcrLoading] = useState(false)
@@ -49,32 +54,39 @@ export default function AnalyzePage() {
 
     setGeneratingOptimal(true)
     setOptimalError(null)
+    setCfopResult(null)
 
     try {
-      const response = await fetch('/api/cube/optimal', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scramble: scramble.trim() }),
-      })
+      // 同时调用两个 API：获取魔方状态和 CFOP 解法
+      const [optimalResponse, cfopResponse] = await Promise.all([
+        fetch('/api/cube/optimal', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ scramble: scramble.trim() }),
+        }),
+        fetch('/api/cube/cfop-solve', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ scramble: scramble.trim() }),
+        })
+      ])
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: '未知错误' }))
-        throw new Error(errorData.error || 'API 请求失败')
+      // 处理魔方状态结果（用于展开图）
+      if (optimalResponse.ok) {
+        const optimalData = await optimalResponse.json()
+        setOptimalResult(optimalData)
       }
 
-      const data = await response.json()
-      setOptimalResult(data)
+      // 处理 CFOP 解法结果
+      if (cfopResponse.ok) {
+        const cfopData = await cfopResponse.json()
+        setCfopResult(cfopData.solution)
+      } else {
+        throw new Error('CFOP 解法生成失败')
+      }
     } catch (e: any) {
-      console.error('生成最优解失败:', e)
+      console.error('生成 CFOP 解法失败:', e)
       setOptimalError(e?.message || '生成失败')
-      setOptimalResult({
-        scramble: scramble.trim(),
-        optimalSolution: '',
-        steps: 0,
-        cubeState: null,
-        formulas: [],
-        explanations: ['最优解生成失败，请稍后再试'],
-      })
     } finally {
       setGeneratingOptimal(false)
     }
@@ -378,29 +390,68 @@ export default function AnalyzePage() {
                   <ColorLegend />
                 </div>
                 
-                {/* 最优解信息 */}
-                {optimalResult && optimalResult.optimalSolution && (
-                  <div className="mt-4 pt-4 border-t border-slate-100">
-                    <div className="flex items-center justify-between mb-2">
+                {/* CFOP 解法信息 */}
+                {cfopResult && (
+                  <div className="mt-4 pt-4 border-t border-slate-100 space-y-3">
+                    <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <Zap className="w-4 h-4 text-orange-500" />
-                        <span className="text-sm font-semibold text-slate-800">最优解</span>
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 font-medium">{optimalResult.steps} 步</span>
+                        <Brain className="w-4 h-4 text-purple-500" />
+                        <span className="text-sm font-semibold text-slate-800">CFOP 解法</span>
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 font-medium">{cfopResult.totalSteps} 步</span>
+                        <span className="text-xs text-slate-500">{cfopResult.orientation}</span>
                       </div>
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => copyToClipboard(optimalResult.optimalSolution, 'optimal')}
+                        onClick={() => copyToClipboard(cfopResult.fullSolution, 'cfop')}
                         className="h-7 px-2 text-xs"
                       >
-                        {copiedField === 'optimal' ? <Check className="w-3 h-3 mr-1" /> : <Copy className="w-3 h-3 mr-1" />}
-                        {copiedField === 'optimal' ? '已复制' : '复制'}
+                        {copiedField === 'cfop' ? <Check className="w-3 h-3 mr-1" /> : <Copy className="w-3 h-3 mr-1" />}
+                        {copiedField === 'cfop' ? '已复制' : '复制'}
                       </Button>
                     </div>
-                    <div className="bg-gradient-to-br from-orange-50 to-amber-50 border border-orange-200 rounded-lg p-3 font-mono text-sm text-slate-800 break-all leading-relaxed shadow-sm">
-                      {optimalResult.optimalSolution}
+                    
+                    {/* Cross */}
+                    <div className="bg-gradient-to-br from-blue-50 to-cyan-50 border border-blue-200 rounded-lg p-3">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-xs font-semibold text-blue-700">Cross</span>
+                        <span className="text-xs text-blue-500">{cfopResult.cross.steps} 步</span>
+                      </div>
+                      <div className="font-mono text-sm text-slate-800">{cfopResult.cross.moves}</div>
+                      <p className="text-xs text-slate-500 mt-1">{cfopResult.cross.description}</p>
                     </div>
-                    <p className="text-xs text-slate-500 mt-2">基于 CFOP、ZB、COLL 等高级公式生成</p>
+                    
+                    {/* F2L */}
+                    <div className="bg-gradient-to-br from-green-50 to-emerald-50 border border-green-200 rounded-lg p-3">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-xs font-semibold text-green-700">F2L</span>
+                        <span className="text-xs text-green-500">{cfopResult.f2l.steps} 步</span>
+                      </div>
+                      <div className="font-mono text-sm text-slate-800 break-all">{cfopResult.f2l.moves}</div>
+                      <p className="text-xs text-slate-500 mt-1">{cfopResult.f2l.description}</p>
+                    </div>
+                    
+                    {/* OLL */}
+                    <div className="bg-gradient-to-br from-yellow-50 to-amber-50 border border-yellow-200 rounded-lg p-3">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-xs font-semibold text-yellow-700">OLL</span>
+                        <span className="text-xs text-yellow-600">{cfopResult.oll.steps} 步</span>
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700">{cfopResult.oll.caseName}</span>
+                      </div>
+                      <div className="font-mono text-sm text-slate-800">{cfopResult.oll.moves}</div>
+                      <p className="text-xs text-slate-500 mt-1">{cfopResult.oll.description}</p>
+                    </div>
+                    
+                    {/* PLL */}
+                    <div className="bg-gradient-to-br from-purple-50 to-pink-50 border border-purple-200 rounded-lg p-3">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-xs font-semibold text-purple-700">PLL</span>
+                        <span className="text-xs text-purple-500">{cfopResult.pll.steps} 步</span>
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-700">{cfopResult.pll.caseName}</span>
+                      </div>
+                      <div className="font-mono text-sm text-slate-800">{cfopResult.pll.moves}</div>
+                      <p className="text-xs text-slate-500 mt-1">{cfopResult.pll.description}</p>
+                    </div>
                   </div>
                 )}
               </CardContent>
@@ -471,7 +522,7 @@ export default function AnalyzePage() {
                       disabled={generatingOptimal || !scramble.trim()}
                       className="h-7 px-3 text-xs bg-orange-500 hover:bg-orange-600"
                     >
-                      {generatingOptimal ? '生成中...' : '生成最优解'}
+                      {generatingOptimal ? '生成中...' : '生成 CFOP 解法'}
                     </Button>
                   </div>
                 </div>
