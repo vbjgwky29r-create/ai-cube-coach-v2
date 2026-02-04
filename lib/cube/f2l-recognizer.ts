@@ -6,6 +6,7 @@
 
 import type { CubeState } from './cube-state'
 import { F2L_ALGORITHMS, type F2LCase } from './f2l-cases'
+import { PieceDetector, CornerLocation, EdgeLocation } from './piece-detector'
 
 /**
  * Corner 位置
@@ -154,18 +155,48 @@ export class F2LRecognizer {
    * 查找 Corner 位置
    */
   private findCornerPosition(state: CubeState, slotIndex: number): CornerPosition {
-    // 简化版：假设 Corner 在顶层
-    // 实际实现需要检查魔方的 8 个 corner 位置
-    return CornerPosition.TOP_LAYER
+    const detector = new PieceDetector()
+    const targetColors = this.getSlotCornerColors(state, slotIndex)
+    const cornerInfo = detector.findCorner(state, targetColors)
+    
+    if (!cornerInfo) {
+      return CornerPosition.TOP_LAYER // 默认在顶层
+    }
+    
+    // 判断 Corner 是否在顶层、槽位中或已归位
+    const location = cornerInfo.location
+    
+    if (location.startsWith('U')) {
+      return CornerPosition.TOP_LAYER
+    } else if (this.isCornerInSlot(location, slotIndex)) {
+      return CornerPosition.SOLVED
+    } else {
+      return CornerPosition.IN_SLOT
+    }
   }
   
   /**
    * 查找 Edge 位置
    */
   private findEdgePosition(state: CubeState, slotIndex: number): EdgePosition {
-    // 简化版：假设 Edge 在顶层
-    // 实际实现需要检查魔方的 12 个 edge 位置
-    return EdgePosition.TOP_LAYER
+    const detector = new PieceDetector()
+    const targetColors = this.getSlotEdgeColors(state, slotIndex)
+    const edgeInfo = detector.findEdge(state, targetColors)
+    
+    if (!edgeInfo) {
+      return EdgePosition.TOP_LAYER // 默认在顶层
+    }
+    
+    // 判断 Edge 是否在顶层、槽位中或已归位
+    const location = edgeInfo.location
+    
+    if (location.startsWith('U')) {
+      return EdgePosition.TOP_LAYER
+    } else if (this.isEdgeInSlot(location, slotIndex)) {
+      return EdgePosition.SOLVED
+    } else {
+      return EdgePosition.IN_SLOT
+    }
   }
   
   /**
@@ -200,6 +231,75 @@ export class F2LRecognizer {
     // 简化版：假设朝上
     // 实际实现需要检查 edge 的颜色方向
     return EdgeOrientation.UP
+  }
+  
+  /**
+   * 获取槽位对应的 Corner 颜色
+   */
+  private getSlotCornerColors(state: CubeState, slotIndex: number): [string, string, string] {
+    // 槽位定义：0=FR, 1=FL, 2=BR, 3=BL
+    // 获取底层中心和对应侧面中心的颜色
+    const bottomColor = state.D[1][1]
+    
+    switch (slotIndex) {
+      case 0: // FR
+        return [bottomColor, state.F[1][1], state.R[1][1]]
+      case 1: // FL
+        return [bottomColor, state.F[1][1], state.L[1][1]]
+      case 2: // BR
+        return [bottomColor, state.B[1][1], state.R[1][1]]
+      case 3: // BL
+        return [bottomColor, state.B[1][1], state.L[1][1]]
+      default:
+        return [bottomColor, state.F[1][1], state.R[1][1]]
+    }
+  }
+  
+  /**
+   * 获取槽位对应的 Edge 颜色
+   */
+  private getSlotEdgeColors(state: CubeState, slotIndex: number): [string, string] {
+    // 槽位定义：0=FR, 1=FL, 2=BR, 3=BL
+    switch (slotIndex) {
+      case 0: // FR
+        return [state.F[1][1], state.R[1][1]]
+      case 1: // FL
+        return [state.F[1][1], state.L[1][1]]
+      case 2: // BR
+        return [state.B[1][1], state.R[1][1]]
+      case 3: // BL
+        return [state.B[1][1], state.L[1][1]]
+      default:
+        return [state.F[1][1], state.R[1][1]]
+    }
+  }
+  
+  /**
+   * 检查 Corner 是否在指定槽位
+   */
+  private isCornerInSlot(location: CornerLocation, slotIndex: number): boolean {
+    const slotCorners = [
+      CornerLocation.DFR, // 槽位 0 (FR)
+      CornerLocation.DFL, // 槽位 1 (FL)
+      CornerLocation.DBR, // 槽位 2 (BR)
+      CornerLocation.DBL, // 槽位 3 (BL)
+    ]
+    
+    return location === slotCorners[slotIndex]
+  }
+  
+  /**
+   * 检查 Edge 是否在指定槽位
+   */
+  private isEdgeInSlot(location: EdgeLocation, slotIndex: number): boolean {
+    const slotEdges = [
+      EdgeLocation.FR, // 槽位 0 (FR)
+      EdgeLocation.FL, // 槽位 1 (FL)
+      EdgeLocation.BR, // 槽位 2 (BR)
+      EdgeLocation.BL, // 槽位 3 (BL)
+    ]
+    
+    return location === slotEdges[slotIndex]
   }
 }
 

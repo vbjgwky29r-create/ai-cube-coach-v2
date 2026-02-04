@@ -1,16 +1,18 @@
 /**
- * 专业级 CFOP 求解器
+ * 专业级 CFOP 求解器 v1.3
  * 
- * 实现：
- * 1. Cross 求解（IDA* 算法）
- * 2. F2L 求解（基于公式表）
+ * 已实现：
+ * 1. Cross 求解（IDA* 算法 + 预计算表）
+ * 2. F2L 求解（智能状态识别 + 41个公式）
  * 3. OLL 识别（57种情况）
  * 4. PLL 识别（21种情况）
+ * 5. XCross 求解器（做十字时顺便做一组 F2L）
+ * 6. COLL 公式库（40个情况）
+ * 7. ZBLL 公式库（部分 T 组）
  * 
  * 后续优化：
- * - XCross（做十字时顺便做一组 F2L）
- * - 更高效的 F2L 插入选择
- * - COLL/ZBLL 高级公式
+ * - 完善 ZBLL 公式库（其他组）
+ * - 更高效的 XCross 识别
  */
 
 import { applyScramble, applyMove, type CubeState } from './cube-state'

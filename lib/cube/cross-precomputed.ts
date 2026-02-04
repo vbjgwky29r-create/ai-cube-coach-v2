@@ -177,7 +177,37 @@ export function findPrecomputedCross(pattern: string): CrossCase | undefined {
  * 根据状态生成模式字符串
  */
 export function generateCrossPattern(state: any): string {
-  // 简化版：返回一个默认模式
-  // 实际实现需要分析魔方状态
-  return 'unknown'
+  // 检查底层棱块的状态
+  const dFace = state.D
+  const centerColor = dFace[1][1]
+  
+  // 统计未归位的棱块
+  const wrongEdges: string[] = []
+  
+  if (dFace[0][1] !== centerColor) wrongEdges.push('f')
+  if (dFace[1][2] !== centerColor) wrongEdges.push('r')
+  if (dFace[2][1] !== centerColor) wrongEdges.push('b')
+  if (dFace[1][0] !== centerColor) wrongEdges.push('l')
+  
+  // 如果所有棱块都归位，返回 solved
+  if (wrongEdges.length === 0) {
+    return 'solved'
+  }
+  
+  // 根据未归位的棱块数量生成模式
+  if (wrongEdges.length === 1) {
+    return `1edge_${wrongEdges[0]}`
+  } else if (wrongEdges.length === 2) {
+    // 检查是相邻还是相对
+    const edges = wrongEdges.sort().join('')
+    if (edges === 'fr' || edges === 'rb' || edges === 'bl' || edges === 'fl') {
+      return `2edge_${wrongEdges.join('')}`
+    } else {
+      return `2edge_${wrongEdges.join('')}`
+    }
+  } else if (wrongEdges.length === 3) {
+    return `3edge_${wrongEdges.join('')}`
+  } else {
+    return '4edge_all'
+  }
 }
