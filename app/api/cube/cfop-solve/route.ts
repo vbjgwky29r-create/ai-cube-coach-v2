@@ -13,7 +13,12 @@ let client: OpenAI | null = null
 
 function getOpenAIClient(): OpenAI {
   if (!client) {
-    client = new OpenAI()
+    const apiKey = process.env.OPENAI_API_KEY
+    console.log('[CFOP] Initializing OpenAI client, API key exists:', !!apiKey)
+    if (!apiKey) {
+      throw new Error('OPENAI_API_KEY environment variable is not set')
+    }
+    client = new OpenAI({ apiKey })
   }
   return client
 }
@@ -76,8 +81,10 @@ export async function POST(request: NextRequest) {
     })
   } catch (error) {
     console.error('CFOP solve error:', error)
+    const errorMessage = error instanceof Error ? error.message : String(error)
+    console.error('Error details:', errorMessage)
     return NextResponse.json(
-      { error: '生成解法失败，请稍后重试' },
+      { error: '生成解法失败，请稍后重试', details: errorMessage },
       { status: 500 }
     )
   }
