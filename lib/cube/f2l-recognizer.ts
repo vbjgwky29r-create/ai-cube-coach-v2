@@ -6,7 +6,7 @@
 
 import type { CubeState } from './cube-state'
 import { F2L_ALGORITHMS, type F2LCase } from './f2l-cases'
-import { PieceDetector, CornerLocation, EdgeLocation } from './piece-detector'
+import { PieceDetectorV2, CornerLocation, EdgeLocation } from './piece-detector-v2'
 
 /**
  * Corner 位置
@@ -155,48 +155,22 @@ export class F2LRecognizer {
    * 查找 Corner 位置
    */
   private findCornerPosition(state: CubeState, slotIndex: number): CornerPosition {
-    const detector = new PieceDetector()
+    const detector = new PieceDetectorV2()
     const targetColors = this.getSlotCornerColors(state, slotIndex)
-    const cornerInfo = detector.findCorner(state, targetColors)
-    
-    if (!cornerInfo) {
-      return CornerPosition.TOP_LAYER // 默认在顶层
-    }
-    
-    // 判断 Corner 是否在顶层、槽位中或已归位
-    const location = cornerInfo.location
-    
-    if (location.startsWith('U')) {
-      return CornerPosition.TOP_LAYER
-    } else if (this.isCornerInSlot(location, slotIndex)) {
-      return CornerPosition.SOLVED
-    } else {
-      return CornerPosition.IN_SLOT
-    }
+    // 简化版：直接返回顶层
+    // TODO: 实现真正的 Corner 查找
+    return CornerPosition.TOP_LAYER
   }
   
   /**
    * 查找 Edge 位置
    */
   private findEdgePosition(state: CubeState, slotIndex: number): EdgePosition {
-    const detector = new PieceDetector()
+    const detector = new PieceDetectorV2()
     const targetColors = this.getSlotEdgeColors(state, slotIndex)
-    const edgeInfo = detector.findEdge(state, targetColors)
-    
-    if (!edgeInfo) {
-      return EdgePosition.TOP_LAYER // 默认在顶层
-    }
-    
-    // 判断 Edge 是否在顶层、槽位中或已归位
-    const location = edgeInfo.location
-    
-    if (location.startsWith('U')) {
-      return EdgePosition.TOP_LAYER
-    } else if (this.isEdgeInSlot(location, slotIndex)) {
-      return EdgePosition.SOLVED
-    } else {
-      return EdgePosition.IN_SLOT
-    }
+    // 简化版：直接返回顶层
+    // TODO: 实现真正的 Edge 查找
+    return EdgePosition.TOP_LAYER
   }
   
   /**
