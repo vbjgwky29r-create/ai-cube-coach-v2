@@ -53,6 +53,8 @@ export interface CFOPSolution {
 // 1. Cross 求解器（IDA* 算法）
 // ============================================================
 
+import { findPrecomputedCross, generateCrossPattern } from './cross-precomputed'
+
 /**
  * Cross 求解器
  * 目标：将4个底层棱块归位到正确位置和方向
@@ -70,6 +72,14 @@ class CrossSolver {
     // 检查是否已经完成 Cross
     if (this.isCrossComplete(cubeState)) {
       return '' // 已完成，不需要额外步骤
+    }
+    
+    // 尝试使用预计算表
+    const pattern = generateCrossPattern(cubeState)
+    const precomputed = findPrecomputedCross(pattern)
+    if (precomputed) {
+      console.log('[Cross] Using precomputed solution:', precomputed.id)
+      return precomputed.solution
     }
     
     // 记录开始时间
@@ -299,6 +309,7 @@ class CrossSolver {
 // ============================================================
 
 import { F2L_ALGORITHMS, type F2LCase } from './f2l-cases'
+import { recognizeAndSelectF2L } from './f2l-recognizer'
 
 /**
  * F2L 求解器
@@ -340,17 +351,15 @@ class F2LSolver {
    * 求解单个槽位
    */
   private solveSlot(state: CubeState, slotIndex: number): string {
-    // 检查槽位是否已完成
-    if (this.isSlotComplete(state, slotIndex)) {
-      return '' // 已完成，不需要额外步骤
+    // 使用智能状态识别选择最优公式
+    const selectedCase = recognizeAndSelectF2L(state, slotIndex)
+    
+    // 如果槽位已完成，返回空
+    if (selectedCase.moves === 0) {
+      return ''
     }
     
-    // 使用启发式方法选择公式
-    // 简化版：从短公式中随机选择
-    const shortCases = F2L_ALGORITHMS.filter(c => c.moves <= 8)
-    const randomCase = shortCases[Math.floor(Math.random() * shortCases.length)]
-    
-    return randomCase.algorithm
+    return selectedCase.algorithm
   }
   
   /**
