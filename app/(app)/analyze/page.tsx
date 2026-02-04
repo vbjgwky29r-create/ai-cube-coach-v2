@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { CubeKeyboard } from '@/components/cube/cube-keyboard'
 import { CubeNet, ColorLegend } from '@/components/cube/cube-net'
+import { ProfessionalAnalysis } from '@/components/cube/professional-analysis'
 import { Sparkles, Zap, Trophy, Target, Box, ChevronDown, ChevronUp, MapPin, Clock, TrendingUp, Fingerprint, AlertCircle, Copy, Check, Camera, Loader2, Brain, Cpu } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { unflattenCubeState, type CubeState } from '@/lib/cube/cube-state'
@@ -32,6 +33,8 @@ export default function AnalyzePage() {
   const [ocrLoading, setOcrLoading] = useState(false)
   const [ocrResult, setOcrResult] = useState<{ scramble: string; solution: string } | null>(null)
   const [showOcrPreview, setShowOcrPreview] = useState(false)
+  const [professionalAnalysis, setProfessionalAnalysis] = useState<any>(null)
+  const [showProfessionalAnalysis, setShowProfessionalAnalysis] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   
   const inputAreaRef = useRef<HTMLDivElement>(null)
@@ -162,6 +165,7 @@ export default function AnalyzePage() {
 
     setOcrLoading(true)
     setOcrResult(null)
+    setProfessionalAnalysis(null)
 
     try {
       // 读取文件为 base64
@@ -170,10 +174,11 @@ export default function AnalyzePage() {
         const base64 = (reader.result as string).split(',')[1]
         
         try {
+          // 调用专业分析 API
           const response = await fetch('/api/ocr/cube-formula', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ image: base64 }),
+            body: JSON.stringify({ image: base64, mode: 'full' }),
           })
 
           if (!response.ok) {
@@ -187,6 +192,13 @@ export default function AnalyzePage() {
               scramble: data.scramble || '',
               solution: data.solution || ''
             })
+            
+            // 如果有专业分析结果，保存并显示
+            if (data.analysis) {
+              setProfessionalAnalysis(data.analysis)
+              setShowProfessionalAnalysis(true)
+            }
+            
             setShowOcrPreview(true)
           } else {
             alert('未能识别到公式，请确保截图包含打乱公式或复原公式')
@@ -308,43 +320,53 @@ export default function AnalyzePage() {
 
         {/* OCR 识别结果预览弹窗 */}
         {showOcrPreview && ocrResult && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <Card className="w-full max-w-lg shadow-2xl">
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+            <Card className="w-full max-w-2xl shadow-2xl my-4">
               <CardHeader className="border-b border-slate-100">
                 <CardTitle className="flex items-center gap-2 text-lg">
                   <Camera className="w-5 h-5 text-blue-500" />
-                  识别结果预览
+                  {professionalAnalysis ? 'AI 专业分析结果' : '识别结果预览'}
                 </CardTitle>
               </CardHeader>
-              <CardContent className="py-4 space-y-4">
-                <p className="text-sm text-slate-500">请检查识别结果，可以直接编辑修正错误</p>
-                
-                {/* 打乱公式 */}
-                <div>
-                  <label className="text-sm font-medium text-slate-700 mb-1 block">🎲 打乱公式</label>
-                  <textarea
-                    value={ocrResult.scramble}
-                    onChange={(e) => setOcrResult({ ...ocrResult, scramble: e.target.value })}
-                    className="w-full p-3 border border-slate-200 rounded-lg font-mono text-sm resize-none focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent"
-                    rows={2}
-                    placeholder="未识别到打乱公式"
-                  />
+              <CardContent className="py-4 space-y-4 max-h-[70vh] overflow-y-auto">
+                {/* 公式编辑区 */}
+                <div className="space-y-3">
+                  <p className="text-sm text-slate-500">请检查识别结果，可以直接编辑修正错误</p>
+                  
+                  {/* 打乱公式 */}
+                  <div>
+                    <label className="text-sm font-medium text-slate-700 mb-1 block">🎲 打乱公式</label>
+                    <textarea
+                      value={ocrResult.scramble}
+                      onChange={(e) => setOcrResult({ ...ocrResult, scramble: e.target.value })}
+                      className="w-full p-3 border border-slate-200 rounded-lg font-mono text-sm resize-none focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent"
+                      rows={2}
+                      placeholder="未识别到打乱公式"
+                    />
+                  </div>
+                  
+                  {/* 复原公式 */}
+                  <div>
+                    <label className="text-sm font-medium text-slate-700 mb-1 block">✨ 复原公式</label>
+                    <textarea
+                      value={ocrResult.solution}
+                      onChange={(e) => setOcrResult({ ...ocrResult, solution: e.target.value })}
+                      className="w-full p-3 border border-slate-200 rounded-lg font-mono text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
+                      rows={3}
+                      placeholder="未识别到复原公式"
+                    />
+                  </div>
                 </div>
                 
-                {/* 复原公式 */}
-                <div>
-                  <label className="text-sm font-medium text-slate-700 mb-1 block">✨ 复原公式</label>
-                  <textarea
-                    value={ocrResult.solution}
-                    onChange={(e) => setOcrResult({ ...ocrResult, solution: e.target.value })}
-                    className="w-full p-3 border border-slate-200 rounded-lg font-mono text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
-                    rows={4}
-                    placeholder="未识别到复原公式"
-                  />
-                </div>
+                {/* 专业分析结果 */}
+                {professionalAnalysis && (
+                  <div className="border-t border-slate-200 pt-4">
+                    <ProfessionalAnalysis analysis={professionalAnalysis} />
+                  </div>
+                )}
                 
                 {/* 操作按钮 */}
-                <div className="flex gap-3 pt-2">
+                <div className="flex gap-3 pt-2 sticky bottom-0 bg-white pb-2">
                   <Button
                     variant="outline"
                     onClick={cancelOcrResult}
@@ -356,7 +378,7 @@ export default function AnalyzePage() {
                     onClick={applyOcrResult}
                     className="flex-1 bg-blue-500 hover:bg-blue-600"
                   >
-                    确认并应用
+                    确认并应用公式
                   </Button>
                 </div>
               </CardContent>
