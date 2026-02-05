@@ -57,6 +57,7 @@ export interface CFOPSolution {
 // ============================================================
 
 import { findPrecomputedCross, generateCrossPattern } from './cross-precomputed'
+import { isCrossComplete as checkCrossComplete } from './cross-checker'
 
 /**
  * Cross 求解器
@@ -167,7 +168,7 @@ class CrossSolver {
    * 检查 Cross 是否完成
    */
   private isCrossComplete(state: CubeState): boolean {
-    return this.pieceDetector.isCrossComplete(state)
+    return checkCrossComplete(state)
   }
   
   /**

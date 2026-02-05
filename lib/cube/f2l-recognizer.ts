@@ -7,6 +7,7 @@
 import type { CubeState } from './cube-state'
 import { F2L_ALGORITHMS, type F2LCase } from './f2l-cases'
 import { PieceDetectorV2, CornerLocation, EdgeLocation } from './piece-detector-v2'
+import { isF2LSlotComplete } from './f2l-slot-checker'
 
 /**
  * Corner 位置
@@ -143,12 +144,7 @@ export class F2LRecognizer {
    * 检查槽位是否已完成
    */
   private isSlotSolved(state: CubeState, slotIndex: number): boolean {
-    // 简化版：检查对应位置的 corner 和 edge 是否归位
-    // 实际实现需要检查具体的颜色和位置
-    
-    // 槽位定义：0=FR, 1=FL, 2=BR, 3=BL
-    // 这里返回 false，表示默认未完成
-    return false
+    return isF2LSlotComplete(state, slotIndex)
   }
   
   /**
