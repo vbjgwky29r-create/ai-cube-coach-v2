@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { solveCFOP, type CFOPSolution } from '@/lib/cube/cfop-solver'
+import { createCubeFromScramble, applyMoveToCoordinateState, isCubeSolved } from '@/lib/cube/cube-coordinate-system'
 // @ts-expect-error - cubejs doesn't have type definitions
 import Cube from 'cubejs'
 
@@ -41,11 +42,26 @@ export async function POST(request: NextRequest) {
     // 使用专业 CFOP 求解器
     const solution = solveCFOP(trimmedScramble)
     
-    // 添加最优解参考
-    const enhancedSolution: CFOPSolution & { optimalReference: number; isReferenceSolution: boolean } = {
+    // 使用坐标系验证解法
+    let verified = false
+    try {
+      let state = createCubeFromScramble(trimmedScramble)
+      const allMoves = solution.fullSolution.split(/\s+/).filter(m => m)
+      for (const move of allMoves) {
+        state = applyMoveToCoordinateState(state, move)
+      }
+      verified = isCubeSolved(state)
+      console.log('[CFOP] Solution verified:', verified)
+    } catch (e) {
+      console.error('[CFOP] Verification failed:', e)
+    }
+    
+    // 添加最优解参考和验证状态
+    const enhancedSolution: CFOPSolution & { optimalReference: number; isReferenceSolution: boolean; verified: boolean } = {
       ...solution,
       optimalReference: optimalMoves,
-      isReferenceSolution: false // 这是真正的算法求解，不是 AI 生成的参考
+      isReferenceSolution: false, // 这是真正的算法求解，不是 AI 生成的参考
+      verified
     }
 
     return NextResponse.json({
