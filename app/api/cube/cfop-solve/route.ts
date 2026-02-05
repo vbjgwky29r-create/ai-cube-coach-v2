@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { solveCFOP, type CFOPSolution } from '@/lib/cube/cfop-solver'
-import { createCubeFromScramble, applyMoveToCoordinateState, isCubeSolved } from '@/lib/cube/cube-coordinate-system'
+import { applyMoveToCoordinateState, isCubeSolved, createSolvedCube } from '@/lib/cube/cube-coordinate-system'
 // @ts-expect-error - cubejs doesn't have type definitions
 import Cube from 'cubejs'
 
@@ -45,7 +45,11 @@ export async function POST(request: NextRequest) {
     // 使用坐标系验证解法
     let verified = false
     try {
-      let state = createCubeFromScramble(trimmedScramble)
+      let state = createSolvedCube()
+      const scrambleMoves = trimmedScramble.split(/\s+/).filter(m => m)
+      for (const move of scrambleMoves) {
+        state = applyMoveToCoordinateState(state, move)
+      }
       const allMoves = solution.fullSolution.split(/\s+/).filter(m => m)
       for (const move of allMoves) {
         state = applyMoveToCoordinateState(state, move)
