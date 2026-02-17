@@ -13,6 +13,7 @@ import { cn } from '@/lib/utils'
 import { applyScramble, createSolvedCube, unflattenCubeState, type CubeState } from '@/lib/cube/cube-state'
 
 type AnyObj = Record<string, any>
+type Stage = 'cross' | 'f2l' | 'oll' | 'pll'
 
 export default function AnalyzePage() {
   const [scramble, setScramble] = useState("R U R' U' R' F R2 U' R' U' R U R' F'")
@@ -28,6 +29,12 @@ export default function AnalyzePage() {
   const [showKeyboard, setShowKeyboard] = useState(true)
   const [keyboardTarget, setKeyboardTarget] = useState<'scramble' | 'solution'>('solution')
   const [showCube, setShowCube] = useState(true)
+
+  const [stageResult, setStageResult] = useState<AnyObj | null>(null)
+  const [selectedStage, setSelectedStage] = useState<Stage | null>(null)
+  const [stageLoading, setStageLoading] = useState<Stage | null>(null)
+  const [stageError, setStageError] = useState<string | null>(null)
+
   const imageInputRef = useRef<HTMLInputElement | null>(null)
 
   const normalizeScrambleInput = (input: string) =>
@@ -51,8 +58,7 @@ export default function AnalyzePage() {
       const reader = new FileReader()
       reader.onload = () => {
         const result = String(reader.result || '')
-        const payload = result.includes(',') ? result.split(',')[1] : result
-        resolve(payload)
+        resolve(result.includes(',') ? result.split(',')[1] : result)
       }
       reader.onerror = () => reject(new Error('failed_to_read_image'))
       reader.readAsDataURL(blob)
@@ -105,6 +111,50 @@ export default function AnalyzePage() {
       }
     }
     return { ok: false, data: payload }
+  }
+
+  const ensureStageResult = async (normalized: string) => {
+    if (stageResult?.scramble === normalized && stageResult?.solution) return stageResult
+    const controller = new AbortController()
+    const timeoutId = window.setTimeout(() => controller.abort('cfop_stage_timeout'), 180000)
+    try {
+      const response = await fetch('/api/cube/cfop-solve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scramble: normalized }),
+        signal: controller.signal,
+      })
+      const data = await response.json().catch(() => null)
+      if (!response.ok || !data?.success) {
+        throw new Error(data?.error || 'CFOP stage solve failed')
+      }
+      setStageResult(data)
+      return data
+    } finally {
+      window.clearTimeout(timeoutId)
+    }
+  }
+
+  const handleStageSolve = async (stage: Stage) => {
+    const normalized = normalizeScrambleInput(scramble.trim())
+    if (!normalized) {
+      setStageError('请先输入打乱公式。')
+      return
+    }
+    setSelectedStage(stage)
+    setStageError(null)
+    setStageLoading(stage)
+    try {
+      const data = await ensureStageResult(normalized)
+      const moves = data?.solution?.[stage]?.moves
+      if (!moves || !String(moves).trim()) {
+        setStageError(stage === 'pll' ? 'PLL Skip' : `${stage.toUpperCase()} 暂无公式`)
+      }
+    } catch (e: any) {
+      setStageError(String(e?.message || '阶段求解失败'))
+    } finally {
+      setStageLoading(null)
+    }
   }
 
   const generateOptimal = async () => {
@@ -176,7 +226,6 @@ export default function AnalyzePage() {
       setOptimalStage('Done')
       setOptimalResult(data)
     } catch (e: any) {
-      console.error('生成最优解失败:', e)
       const msg = String(e?.message || '')
       const isAbort = controller.signal.aborted || e?.name === 'AbortError' || /aborted|abort/i.test(msg)
       setOptimalError(isAbort ? '生成超时，请点击“刷新最优解”重试。' : (msg || '生成最优解失败'))
@@ -201,7 +250,6 @@ export default function AnalyzePage() {
       alert('请先输入你的还原公式。')
       return
     }
-
     setAnalyzing(true)
     const controller = new AbortController()
     const timeoutId = window.setTimeout(() => controller.abort('analyze_timeout'), 120000)
@@ -212,15 +260,15 @@ export default function AnalyzePage() {
         body: JSON.stringify({ scramble, solution }),
         signal: controller.signal,
       })
-      const data = await response.json()
+      const data = await response.json().catch(() => null)
       if (!response.ok) {
         alert(data?.error || '分析请求失败，请重试。')
         return
       }
       setResult(data)
-    } catch (e) {
-      console.error(e)
-      alert('分析失败，请重试。')
+    } catch (e: any) {
+      const isAbort = controller.signal.aborted || e?.name === 'AbortError'
+      alert(isAbort ? '分析超时，请重试。' : '分析失败，请重试。')
     } finally {
       window.clearTimeout(timeoutId)
       setAnalyzing(false)
@@ -232,12 +280,10 @@ export default function AnalyzePage() {
   const handleImageUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-
     try {
       setOcrLoading(true)
       const compressed = await compressImage(file)
       const base64 = await blobToBase64(compressed)
-
       const response = await fetch('/api/ocr/cube-formula', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -245,23 +291,16 @@ export default function AnalyzePage() {
       })
       const data = await response.json().catch(() => ({}))
       if (!response.ok) {
-        const backendError = typeof data?.error === 'string' ? data.error : 'OCR 请求失败'
-        throw new Error(backendError)
+        throw new Error(typeof data?.error === 'string' ? data.error : 'OCR 请求失败')
       }
-
       if (data.scramble) setScramble(data.scramble)
       if (data.solution) setSolution(data.solution)
       if (!data.scramble && !data.solution) {
-        alert('OCR did not extract scramble/solution. Please try a clearer screenshot.')
+        alert('OCR 未识别出打乱/还原公式，请换更清晰截图。')
       }
     } catch (err: any) {
-      console.error('[OCR Upload] Failed:', err)
       const msg = String(err?.message || 'OCR 失败')
-      if (msg.includes('Missing VOLCENGINE_API_KEY')) {
-        alert('OCR 服务未配置：缺少 VOLCENGINE_API_KEY。请先在部署环境中配置该变量。')
-      } else {
-        alert(`OCR 失败：${msg}`)
-      }
+      alert(`OCR 失败：${msg}`)
     } finally {
       setOcrLoading(false)
       e.target.value = ''
@@ -271,14 +310,9 @@ export default function AnalyzePage() {
   const handleKeyboardInput = (value: string) => {
     const setValue = keyboardTarget === 'scramble' ? setScramble : setSolution
     const currentValue = keyboardTarget === 'scramble' ? scramble : solution
-
-    if (value === "'" || value === '2') {
-      setValue(currentValue.trimEnd() + value + ' ')
-    } else if (value === ' ') {
-      setValue(currentValue + value)
-    } else {
-      setValue(currentValue + value + ' ')
-    }
+    if (value === "'" || value === '2') setValue(currentValue.trimEnd() + value + ' ')
+    else if (value === ' ') setValue(currentValue + value)
+    else setValue(currentValue + value + ' ')
   }
 
   const handleBackspace = () => {
@@ -293,6 +327,9 @@ export default function AnalyzePage() {
     if (keyboardTarget === 'scramble') {
       setScramble('')
       setOptimalResult(null)
+      setStageResult(null)
+      setSelectedStage(null)
+      setStageError(null)
     } else {
       setSolution('')
     }
@@ -308,6 +345,7 @@ export default function AnalyzePage() {
   const pllMovesDisplay = typeof pllMovesRaw === 'string' && pllMovesRaw.trim().length > 0
     ? pllMovesRaw
     : 'PLL Skip'
+  const stageMoves = selectedStage ? String(stageResult?.solution?.[selectedStage]?.moves || '') : ''
 
   return (
     <div className="min-h-screen py-4 sm:py-6">
@@ -331,9 +369,6 @@ export default function AnalyzePage() {
                     <button onClick={() => setKeyboardTarget('scramble')} className={cn('text-[10px] px-2 py-0.5 rounded', keyboardTarget === 'scramble' ? 'bg-orange-500 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200')}>
                       虚拟键盘
                     </button>
-                    <button onClick={generateOptimal} className="text-[10px] px-2 py-0.5 rounded bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-50" disabled={generatingOptimal || !scramble.trim()}>
-                      {generatingOptimal ? '生成中...' : '生成展开图'}
-                    </button>
                     {cubeState && (
                       <button onClick={() => setShowCube(!showCube)} className="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-500 hover:bg-slate-200 flex items-center gap-1">
                         {showCube ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
@@ -352,6 +387,30 @@ export default function AnalyzePage() {
                     </div>
                   </div>
                 )}
+                <div className="mt-3 grid grid-cols-5 gap-2">
+                  <button onClick={() => handleStageSolve('cross')} className="text-[10px] px-2 py-1 rounded bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:opacity-50" disabled={!!stageLoading || !scramble.trim()}>
+                    {stageLoading === 'cross' ? 'Cross...' : 'Cross'}
+                  </button>
+                  <button onClick={() => handleStageSolve('f2l')} className="text-[10px] px-2 py-1 rounded bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:opacity-50" disabled={!!stageLoading || !scramble.trim()}>
+                    {stageLoading === 'f2l' ? 'F2L...' : 'F2L'}
+                  </button>
+                  <button onClick={() => handleStageSolve('oll')} className="text-[10px] px-2 py-1 rounded bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:opacity-50" disabled={!!stageLoading || !scramble.trim()}>
+                    {stageLoading === 'oll' ? 'OLL...' : 'OLL'}
+                  </button>
+                  <button onClick={() => handleStageSolve('pll')} className="text-[10px] px-2 py-1 rounded bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:opacity-50" disabled={!!stageLoading || !scramble.trim()}>
+                    {stageLoading === 'pll' ? 'PLL...' : 'PLL'}
+                  </button>
+                  <button onClick={generateOptimal} className="text-[10px] px-2 py-1 rounded bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-50" disabled={generatingOptimal || !scramble.trim()}>
+                    展开图
+                  </button>
+                </div>
+                {selectedStage && (
+                  <div className="mt-2 text-[10px] bg-slate-50 border border-slate-200 rounded p-2">
+                    <div className="text-slate-500 mb-1">{selectedStage.toUpperCase()}：</div>
+                    <code className="font-cube text-slate-800 break-all">{stageMoves || (selectedStage === 'pll' ? 'PLL Skip' : 'No moves')}</code>
+                  </div>
+                )}
+                {stageError && <p className="mt-1 text-[10px] text-red-600">{stageError}</p>}
               </div>
 
               <div>
@@ -472,4 +531,3 @@ export default function AnalyzePage() {
     </div>
   )
 }
-
