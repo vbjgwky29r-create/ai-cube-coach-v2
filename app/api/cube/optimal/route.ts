@@ -186,31 +186,10 @@ async function handleOptimalRequest(
     // 鑾峰彇榄旀柟鐘舵€?
     const cubeState = applyScramble(createSolvedCube(), trimmedScramble)
 
-    // 灏嗘墦涔卞叕寮忚浆鎹负 cube-solver 闇€瑕佺殑鏍煎紡锛堢Щ闄ょ┖鏍硷級
-    const solverScramble = trimmedScramble.replace(/\s+/g, ' ').trim()
-
-    // 鐢熸垚鏈€浼樿В (浣跨敤 cube-solver 搴?
-    let optimalSolution = ''
-    let steps = 0
-
-    try {
-      // 鍔ㄦ€佸鍏?cube-solver
-      const solver = require('cube-solver')
-      const solution = solver.solve(solverScramble)
-
-      if (solution && solution.length > 0) {
-        optimalSolution = solution
-        steps = solution.trim().split(/\s+/).length
-      }
-    } catch (solverError) {
-      console.error('cube-solver error:', solverError)
-    }
-
-    if (!optimalSolution) {
-      const cfop = solveCFOPDetailedVerified(trimmedScramble)
-      optimalSolution = cfop.solution
-      steps = cfop.totalSteps
-    }
+    // 鐢熸垚 CFOP 鍙傝€冭В锛堜笉浣跨敤閫嗘墦涔卞瀷鏈€鐭В锛?
+    const cfop = solveCFOPDetailedVerified(trimmedScramble)
+    const optimalSolution = cfop.solution
+    const steps = cfop.totalSteps
 
     // 瑙ｆ瀽鏈€浼樿В骞惰瘑鍒叕寮?
     let recognizedFormulas: any[] = []
@@ -233,6 +212,14 @@ async function handleOptimalRequest(
       cubeState: unflattenCubeState(cubeState),
       formulas: recognizedFormulas,
       explanations,
+      strategy: 'CFOP',
+      cfop: {
+        cross: cfop.cross,
+        f2l: cfop.f2l,
+        oll: cfop.oll,
+        pll: cfop.pll,
+        verified: cfop.verified,
+      },
     })
   } catch (e: any) {
     console.error('Optimal solution error:', e)

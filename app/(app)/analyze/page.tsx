@@ -83,6 +83,10 @@ export default function AnalyzePage() {
       })
 
       const data = await response.json()
+      if (!response.ok) {
+        alert(data?.error || '鍒嗘瀽澶辫触锛岃绋嶅悗閲嶈瘯')
+        return
+      }
       setResult(data)
     } catch (e) {
       console.error(e)
