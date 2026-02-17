@@ -191,17 +191,25 @@ export default function AnalyzePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ image: base64, mode: 'simple' }),
       })
-      const data = await response.json()
-      if (!response.ok) throw new Error(data?.error || 'ocr_request_failed')
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        const backendError = typeof data?.error === 'string' ? data.error : 'OCR 请求失败'
+        throw new Error(backendError)
+      }
 
       if (data.scramble) setScramble(data.scramble)
       if (data.solution) setSolution(data.solution)
       if (!data.scramble && !data.solution) {
         alert('OCR did not extract scramble/solution. Please try a clearer screenshot.')
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('[OCR Upload] Failed:', err)
-      alert('Image OCR failed. Please try again.')
+      const msg = String(err?.message || 'OCR 失败')
+      if (msg.includes('Missing VOLCENGINE_API_KEY')) {
+        alert('OCR 服务未配置：缺少 VOLCENGINE_API_KEY。请先在部署环境中配置该变量。')
+      } else {
+        alert(`OCR 失败：${msg}`)
+      }
     } finally {
       setOcrLoading(false)
       e.target.value = ''
