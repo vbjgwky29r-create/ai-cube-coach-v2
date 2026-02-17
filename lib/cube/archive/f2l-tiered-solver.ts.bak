@@ -1,0 +1,564 @@
+/**
+ * F2L 分层转换求解器
+ *
+ * 核心思想：
+ * L3（非U层）→ 提取到U层 → L2
+ * L2（U层非标态）→ U调整 → L1
+ * L1（标态）→ 标准公式 → 完成
+ *
+ * 只需要两个��换器：
+ * 1. L3→L2转换器：提取块到U层
+ * 2. L2→L1转换器：U调整到标态
+ */
+
+import Cube from 'cubejs'
+
+// ============================================================
+// 常量定义
+// ============================================================
+
+const INDICES = {
+  // U层棱块
+  UF: [7, 19], UR: [5, 10], UB: [1, 46], UL: [3, 37],
+  // 中层棱块
+  FR: [12, 23], FL: [21, 41], BL: [39, 47], BR: [48, 14],
+  // D层棱块
+  DF: [28, 25], DL: [30, 43], DB: [32, 52], DR: [34, 16],
+  // U层角块
+  URF: [8, 20, 9], UFL: [6, 18, 38], ULB: [0, 36, 47], UBR: [2, 45, 11],
+  // D层角块（槽位）
+  DFR: [29, 26, 15], DFL: [27, 44, 24], DBL: [33, 42, 53], DBR: [35, 51, 17],
+} as const
+
+// 标态定义：每个槽位的标态位置（角块 + 相邻棱块）
+const STANDARD_STATE = {
+  FR: { corner: 'URF', edges: ['UF', 'UR'] },
+  FL: { corner: 'UFL', edges: ['UF', 'UL'] },
+  BL: { corner: 'ULB', edges: ['UL', 'UB'] },
+  BR: { corner: 'UBR', edges: ['UB', 'UR'] },
+} as const
+
+// U层相邻关系（用于判断标态）
+const U_ADJACENCY: Record<string, string[]> = {
+  'URF': ['UF', 'UR'],
+  'UFL': ['UF', 'UL'],
+  'ULB': ['UL', 'UB'],
+  'UBR': ['UB', 'UR'],
+}
+
+// U层顺序（用于计算U调整）
+const U_CORNERS = ['URF', 'UFL', 'ULB', 'UBR'] as const
+const U_EDGES = ['UF', 'UL', 'UB', 'UR'] as const
+
+// 槽位颜色
+const SLOT_COLORS = {
+  FR: { corner: ['D', 'F', 'R'] as const, edge: ['F', 'R'] as const },
+  FL: { corner: ['D', 'F', 'L'] as const, edge: ['F', 'L'] as const },
+  BL: { corner: ['D', 'B', 'L'] as const, edge: ['B', 'L'] as const },
+  BR: { corner: ['D', 'B', 'R'] as const, edge: ['B', 'R'] as const },
+} as const
+
+// ============================================================
+// 类型定义
+// ============================================================
+
+type Slot = keyof typeof STANDARD_STATE
+type Level = 'L1' | 'L2' | 'L3' | 'DONE'
+
+interface LevelResult {
+  level: Level
+  cornerPos: string
+  edgePos: string
+  cornerInU: boolean
+  edgeInU: boolean
+  isStandard: boolean
+  needUAdjustment: string | null
+}
+
+// ============================================================
+// 基础工具函数
+// ============================================================
+
+/**
+ * 检查Cross是否完好
+ */
+function checkCrossIntact(state: string): boolean {
+  // D面4个位置都是D色
+  return state[28] === 'D' && state[30] === 'D' &&
+         state[34] === 'D' && state[32] === 'D'
+}
+
+/**
+ * 检查槽位是否已完成
+ */
+function checkSlotComplete(state: string, slot: Slot): boolean {
+  const slotIdx = {
+    FR: { corner: INDICES.DFR, edge: INDICES.FR },
+    FL: { corner: INDICES.DFL, edge: INDICES.FL },
+    BL: { corner: INDICES.DBL, edge: INDICES.BL },
+    BR: { corner: INDICES.DBR, edge: INDICES.BR },
+  }[slot]
+
+  const colors = SLOT_COLORS[slot]
+  const cornerColors = state[slotIdx.corner[0]] + state[slotIdx.corner[1]] + state[slotIdx.corner[2]]
+  const edgeColors = state[slotIdx.edge[0]] + state[slotIdx.edge[1]]
+
+  // 检查颜色匹配（忽略顺序）
+  const cornerMatch = cornerColors.split('').sort().join('') === [...colors.corner].sort().join('')
+  const edgeMatch = edgeColors.split('').sort().join('') === [...colors.edge].sort().join('')
+
+  // 检查角块D面朝下
+  const cornerOriented = state[slotIdx.corner[0]] === 'D'
+
+  return cornerMatch && edgeMatch && cornerOriented
+}
+
+/**
+ * 查找块的位置
+ */
+function findPiece(state: string, colors: readonly string[], type: 'corner' | 'edge'): string {
+  const sortedColors = [...colors].sort().join('')
+
+  if (type === 'corner') {
+    const positions: Record<string, number[]> = {
+      'URF': INDICES.URF, 'UFL': INDICES.UFL, 'ULB': INDICES.ULB, 'UBR': INDICES.UBR,
+      'DFR': INDICES.DFR, 'DFL': INDICES.DFL, 'DBL': INDICES.DBL, 'DBR': INDICES.DBR,
+    }
+    for (const [name, idx] of Object.entries(positions)) {
+      const actual = state[idx[0]] + state[idx[1]] + state[idx[2]]
+      if (actual.split('').sort().join('') === sortedColors) return name
+    }
+  } else {
+    const positions: Record<string, number[]> = {
+      'UF': INDICES.UF, 'UR': INDICES.UR, 'UB': INDICES.UB, 'UL': INDICES.UL,
+      'FR': INDICES.FR, 'FL': INDICES.FL, 'BL': INDICES.BL, 'BR': INDICES.BR,
+      'DF': INDICES.DF, 'DL': INDICES.DL, 'DB': INDICES.DB, 'DR': INDICES.DR,
+    }
+    for (const [name, idx] of Object.entries(positions)) {
+      const actual = state[idx[0]] + state[idx[1]]
+      if (actual.split('').sort().join('') === sortedColors) return name
+    }
+  }
+
+  return 'unknown'
+}
+
+// ============================================================
+// 级别判断函数
+// ============================================================
+
+/**
+ * 判断槽位当前处于哪个级别
+ */
+function getLevel(state: string, slot: Slot): LevelResult {
+  const colors = SLOT_COLORS[slot]
+  const standard = STANDARD_STATE[slot]
+
+  // 查找块位置
+  const cornerPos = findPiece(state, colors.corner, 'corner')
+  const edgePos = findPiece(state, colors.edge, 'edge')
+
+  // 判断是否在U层
+  const cornerInU = U_CORNERS.includes(cornerPos as any)
+  const edgeInU = U_EDGES.includes(edgePos as any)
+
+  // 检查是否标态
+  const cornerAtStandard = cornerPos === standard.corner
+  const edgeAtStandard = cornerAtStandard && standard.edges.includes(edgePos as any)
+  const isStandard = cornerInU && edgeInU && cornerAtStandard && edgeAtStandard
+
+  // 计算需要的U调整（L2→L1）
+  let needUAdjustment: string | null = null
+  if (cornerInU && edgeInU && !cornerAtStandard) {
+    const currentIndex = U_CORNERS.indexOf(cornerPos as any)
+    const targetIndex = U_CORNERS.indexOf(standard.corner)
+    if (currentIndex >= 0 && targetIndex >= 0) {
+      const diff = (targetIndex - currentIndex + 4) % 4
+      if (diff === 1) needUAdjustment = 'U'
+      else if (diff === 2) needUAdjustment = 'U2'
+      else if (diff === 3) needUAdjustment = "U'"
+    }
+  }
+
+  // 判断级别
+  let level: Level
+  if (checkSlotComplete(state, slot)) {
+    level = 'DONE'
+  } else if (isStandard) {
+    level = 'L1'
+  } else if (cornerInU && edgeInU) {
+    level = 'L2'
+  } else {
+    level = 'L3'
+  }
+
+  return {
+    level,
+    cornerPos,
+    edgePos,
+    cornerInU,
+    edgeInU,
+    isStandard,
+    needUAdjustment,
+  }
+}
+
+// ============================================================
+// L2 → L1 转换器（U调整）
+// ============================================================
+
+/**
+ * L2→L1转换器：通过U调整使块变成标态
+ * @returns U调整公式（如果需要），或null（已经是L1或不需要调整）
+ */
+function l2ToL1(state: string, slot: Slot): string | null {
+  const result = getLevel(state, slot)
+
+  // 如果已经是L1或DONE，不需要转换
+  if (result.level === 'L1' || result.level === 'DONE') {
+    return null
+  }
+
+  // 如果是L2，返回U调整
+  if (result.level === 'L2' && result.needUAdjustment) {
+    return result.needUAdjustment
+  }
+
+  // L3无法通过U调整变成L1
+  return null
+}
+
+// ============================================================
+// L3 → L2 转换器（提取到U层）
+// ============================================================
+
+/**
+ * 提取公式库：将非U层的块提取到U层
+ * 按槽位和块位置分类
+ */
+const EXTRACT_FORMULAS = {
+  // 角块在D层的提取（带对应槽位的侧面转动）
+  cornerInD: {
+    // FR槽位的角块在DFR：R U R' 把角块带到U层
+    FR_from_DFR: ['R U R\'', 'R\' U\' R', 'R U2 R\'', 'R\' U2 R'],
+    // FL槽位的角块在DFL：L' U' L 把角块带到U层
+    FL_from_DFL: ['L\' U\' L', 'L U L\'', 'L\' U2 L', 'L U2 L\''],
+    // BL槽位的角块在DBL：L U L' 把角块带到U层
+    BL_from_DBL: ['L U L\'', 'L\' U\' L', 'L U2 L\'', 'L\' U2 L'],
+    // BR槽位的角块在DBR：R' U' R 把角块带到U层
+    BR_from_DBR: ['R\' U\' R', 'R U R\'', 'R\' U2 R', 'R U2 R\''],
+  },
+  // 角块在其他槽位（需要先移到目标槽位附近再提取）
+  cornerInOtherSlot: [
+    // 通用提取公式
+    'R U R\'', 'R\' U\' R', 'L U L\'', 'L\' U\' L',
+    // 双次转动
+    'R U2 R\'', 'R\' U2 R', 'L U2 L\'', 'L\' U2 L',
+  ],
+  // 棱块在中层的提取
+  edgeInMiddle: {
+    // FR棱块提取：R U' R' 或 F' U F
+    FR: ['R U\' R\'', 'F\' U F'],
+    // FL棱块提取：L' U' L 或 F U' F'
+    FL: ['L\' U\' L', 'F U\' F\''],
+    // BL棱块提取：L U L' 或 B' U B
+    BL: ['L U L\'', 'B\' U B'],
+    // BR棱块提取：R' U R 或 B U' B'
+    BR: ['R\' U R', 'B U\' B\''],
+  },
+  // D层棱块提取（很少见，但也支持）
+  edgeInD: [
+    'F2 U F2', 'F2 U\' F2', 'B2 U B2', 'B2 U\' B2',
+    'R2 U R2', 'R2 U\' R2', 'L2 U L2', 'L2 U\' L2',
+  ],
+} as const
+
+/**
+ * L3→L2转换器：将非U层的块提取到U层
+ * @returns 提取公式，或null（已经在U层）
+ */
+function l3ToL2(state: string, slot: Slot): string[] {
+  const result = getLevel(state, slot)
+
+  // 如果已经在U层（L1/L2），不需要提取
+  if (result.level === 'L1' || result.level === 'L2' || result.level === 'DONE') {
+    return []
+  }
+
+  const formulas: string[] = []
+
+  // 情况1：角块在D层
+  if (!result.cornerInU) {
+    const cornerPos = result.cornerPos
+
+    // 角块在目标槽位：直接提取
+    if (cornerPos === 'DFR' && slot === 'FR') {
+      formulas.push(...EXTRACT_FORMULAS.cornerInD.FR_from_DFR)
+    } else if (cornerPos === 'DFL' && slot === 'FL') {
+      formulas.push(...EXTRACT_FORMULAS.cornerInD.FL_from_DFL)
+    } else if (cornerPos === 'DBL' && slot === 'BL') {
+      formulas.push(...EXTRACT_FORMULAS.cornerInD.BL_from_DBL)
+    } else if (cornerPos === 'DBR' && slot === 'BR') {
+      formulas.push(...EXTRACT_FORMULAS.cornerInD.BR_from_DBR)
+    } else {
+      // 角块在其他D层位置：使用通用提取
+      formulas.push(...EXTRACT_FORMULAS.cornerInOtherSlot)
+    }
+  }
+
+  // 情况2：棱块不在U层
+  if (!result.edgeInU) {
+    const edgePos = result.edgePos
+
+    // 棱块在中层：使用特定提取公式
+    if (edgePos === 'FR') {
+      formulas.push(...EXTRACT_FORMULAS.edgeInMiddle.FR)
+    } else if (edgePos === 'FL') {
+      formulas.push(...EXTRACT_FORMULAS.edgeInMiddle.FL)
+    } else if (edgePos === 'BL') {
+      formulas.push(...EXTRACT_FORMULAS.edgeInMiddle.BL)
+    } else if (edgePos === 'BR') {
+      formulas.push(...EXTRACT_FORMULAS.edgeInMiddle.BR)
+    } else if (['DF', 'DL', 'DB', 'DR'].includes(edgePos)) {
+      // 棱块在D层
+      formulas.push(...EXTRACT_FORMULAS.edgeInD)
+    }
+  }
+
+  // 去重
+  return [...new Set(formulas)]
+}
+
+// ============================================================
+// L1 标准公式库
+// ============================================================
+
+/**
+ * 标态插入公式（L1级别使用）
+ */
+const STANDARD_INSERT_FORMULAS: Record<Slot, string[]> = {
+  FR: [
+    'R U R\'',          // 直接插入
+    'U R U\' R\'',      // 带U调整的插入
+    'R U\' R\' U R U\' R\'',  // 配对插入
+    'R\' U\' R U R\' U\' R',  // 反向配对
+  ],
+  FL: [
+    'L\' U\' L',        // 直接插入
+    'U\' L\' U L',      // 带U调整的插入
+    'L\' U L U\' L\' U L',    // 配对插入
+    'L U L\' U\' L U L\'',    // 反向配对
+  ],
+  BL: [
+    'L U L\'',          // 直接插入
+    'U L U\' L\'',      // 带U调整的插入
+    'L U\' L\' U L U\' L\'',  // 配对插入
+    'L\' U\' L U\' L\' U L',  // 反向配对
+  ],
+  BR: [
+    'R\' U\' R',        // 直接插入
+    'U R\' U\' R',      // 带U调整的插入
+    'R\' U R U\' R\' U R',    // 配对插入
+    'R U R\' U\' R U R\'',    // 反向配对
+  ],
+}
+
+// ============================================================
+// 统一F2L求解器
+// ============================================================
+
+/**
+ * 求解单个F2L槽位
+ * 核心逻辑：L3→L2→L1→完成
+ */
+function solveF2LSlot(cube: Cube, slot: Slot): string | null {
+  const state = cube.asString()
+
+  // 已完成
+  if (checkSlotComplete(state, slot)) {
+    return ''
+  }
+
+  const level = getLevel(state, slot)
+
+  // L1：标态，直接用公式
+  if (level.level === 'L1') {
+    for (const formula of STANDARD_INSERT_FORMULAS[slot]) {
+      if (tryFormula(cube, slot, formula)) {
+        return formula
+      }
+    }
+  }
+
+  // L2：U层非标态，U调整后用公式
+  if (level.level === 'L2') {
+    // 先尝试不用U调整的公式（某些L2情况直接可用）
+    for (const formula of STANDARD_INSERT_FORMULAS[slot]) {
+      if (tryFormula(cube, slot, formula)) {
+        return formula
+      }
+    }
+
+    // 尝试所有U调整
+    for (const uAdj of ['U', "U'", 'U2']) {
+      for (const formula of STANDARD_INSERT_FORMULAS[slot]) {
+        const full = uAdj + ' ' + formula
+        if (tryFormula(cube, slot, full)) {
+          return full
+        }
+      }
+    }
+
+    // 尝试双重U调整
+    for (const uAdj1 of ['U', "U'", 'U2']) {
+      for (const uAdj2 of ['U', "U'", 'U2']) {
+        for (const formula of STANDARD_INSERT_FORMULAS[slot]) {
+          const full = uAdj1 + ' ' + uAdj2 + ' ' + formula
+          if (tryFormula(cube, slot, full)) {
+            return full
+          }
+        }
+      }
+    }
+  }
+
+  // L3：非U层，提取后用公式
+  if (level.level === 'L3') {
+    const extracts = l3ToL2(state, slot)
+
+    // 尝试每个提取公式
+    for (const extract of extracts) {
+      // 尝试 提取 + 公式
+      for (const formula of STANDARD_INSERT_FORMULAS[slot]) {
+        const full = extract + ' ' + formula
+        if (tryFormula(cube, slot, full)) {
+          return full
+        }
+      }
+
+      // 尝试 提取 + U调整 + 公式（所有U调整）
+      for (const uAdj of ['U', "U'", 'U2']) {
+        for (const formula of STANDARD_INSERT_FORMULAS[slot]) {
+          const full = extract + ' ' + uAdj + ' ' + formula
+          if (tryFormula(cube, slot, full)) {
+            return full
+          }
+        }
+      }
+
+      // 尝试 提取 + 双重U调整 + 公式
+      for (const uAdj1 of ['U', "U'"]) {
+        for (const uAdj2 of ['U', "U'"]) {
+          for (const formula of STANDARD_INSERT_FORMULAS[slot]) {
+            const full = extract + ' ' + uAdj1 + ' ' + uAdj2 + ' ' + formula
+            if (tryFormula(cube, slot, full)) {
+              return full
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return null
+}
+
+/**
+ * 尝试公式并验证
+ */
+function tryFormula(cube: Cube, slot: Slot, formula: string): boolean {
+  try {
+    const test = new Cube(cube)
+    test.move(formula)
+    const state = test.asString()
+    return checkSlotComplete(state, slot) && checkCrossIntact(state)
+  } catch {
+    return false
+  }
+}
+
+// ============================================================
+// 完整F2L求解器
+// ============================================================
+
+export interface F2LResult {
+  solution: string
+  steps: number
+  details: string[]
+  slots: {
+    slot: Slot
+    initialLevel: Level
+    formula: string | null
+    success: boolean
+  }[]
+}
+
+/**
+ * 求解完整F2L
+ * 按复杂度排序：DONE → L1 → L2 → L3
+ */
+export function solveF2L(cube: Cube): F2LResult {
+  const details: string[] = []
+  const solutionParts: string[] = []
+  const slots: F2LResult['slots'] = []
+
+  // 分析所有槽位的复杂度
+  const slotAnalysis: Array<{ slot: Slot; level: Level; priority: number }> = []
+  for (const slot of ['FR', 'FL', 'BL', 'BR'] as Slot[]) {
+    const state = getLevel(cube.asString(), slot)
+    let priority = 0
+    if (state.level === 'DONE') priority = 0
+    else if (state.level === 'L1') priority = 1
+    else if (state.level === 'L2') priority = 2
+    else priority = 3
+
+    slotAnalysis.push({ slot, level: state.level, priority })
+  }
+
+  // 按优先级排序（简单的先解决）
+  slotAnalysis.sort((a, b) => a.priority - b.priority)
+
+  // 逐个求解
+  for (const { slot, level } of slotAnalysis) {
+    if (level === 'DONE') {
+      details.push(`${slot}: ✅ 已完成`)
+      slots.push({ slot, initialLevel: level, formula: '', success: true })
+      continue
+    }
+
+    const formula = solveF2LSlot(cube, slot)
+    if (formula) {
+      details.push(`${slot}: ${level} → ${formula}`)
+      slots.push({ slot, initialLevel: level, formula, success: true })
+      cube.move(formula)
+      solutionParts.push(formula)
+    } else {
+      details.push(`${slot}: ${level} → ❌ 未找到解`)
+      slots.push({ slot, initialLevel: level, formula: null, success: false })
+    }
+  }
+
+  return {
+    solution: solutionParts.join(' '),
+    steps: solutionParts.join(' ').split(' ').filter(s => s).length,
+    details,
+    slots,
+  }
+}
+
+// ============================================================
+// 导出
+// ============================================================
+
+export {
+  getLevel,
+  l2ToL1,
+  l3ToL2,
+  solveF2LSlot,
+  checkSlotComplete,
+  checkCrossIntact,
+  STANDARD_STATE,
+  SLOT_COLORS,
+}
+
+export type { Slot, Level, LevelResult }

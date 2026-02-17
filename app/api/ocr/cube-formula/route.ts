@@ -22,9 +22,16 @@ function postProcessFormula(text: string): string {
   // 2. 确保数字 2 正确（有时被识别为其他字符）
   result = result.replace(/[²]/g, "2")
   
-  // 3. 修正字母大小写（魔方公式使用大写字母）
+  // 3. 修正字母大小写
+  // - 标准转体 R/L/U/D/F/B/M/E/S/X/Y/Z → 大写
+  // - 宽转 r/l/u/d/f/b（双层转）→ 保持小写
   result = result.replace(/\b([urfdlbmesxyz])(['2]?)\b/gi, (match, letter, modifier) => {
-    return letter.toUpperCase() + (modifier || '')
+    const lower = letter.toLowerCase()
+    // 宽转（r/l/u/d/f/b）保持小写，其他转大写
+    if ('rludfb'.includes(lower)) {
+      return lower + (modifier || '')
+    }
+    return lower.toUpperCase() + (modifier || '')
   })
   
   // 4. 确保修饰符正确（' 和 2）

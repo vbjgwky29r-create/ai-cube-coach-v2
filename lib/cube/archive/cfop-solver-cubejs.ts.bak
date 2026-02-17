@@ -1,0 +1,600 @@
+/**
+ * 基于cubejs的CFOP求解器
+ *
+ * 架构：
+ * 1. CubeState - 用cubejs包装的状态
+ * 2. 状态分析 - 检测Cross、F2L槽位、OLL/PLL情况
+ * 3. 各阶段求解器 - Cross, F2L, OLL, PLL
+ */
+
+import Cube from 'cubejs'
+
+// ============================================================
+// 类型定义
+// ============================================================
+
+export interface CubeState {
+  cube: Cube
+  asString: () => string
+  move: (move: string) => CubeState
+  clone: () => CubeState
+  isSolved: () => boolean
+}
+
+export interface Position {
+  x: number  // -1, 0, 1
+  y: number  // -1, 0, 1 (1=U, -1=D)
+  z: number  // -1, 0, 1 (1=F, -1=B)
+}
+
+export interface EdgePiece {
+  id: string        // UF, UR, UB, UL, etc.
+  position: Position
+  colors: string[]   // 两个颜色，如 ['白', '绿'] for UF
+  isSolved: boolean  // 是否在正确位置且朝向正确
+}
+
+export interface CornerPiece {
+  id: string        // URF, UFL, ULB, UBR, DFR, DLF, DBL, DRB
+  position: Position
+  colors: string[]   // 三个颜色
+  isSolved: boolean
+}
+
+export interface F2LSlot {
+  slot: 'FR' | 'FL' | 'BL' | 'BR'
+  cornerId: string | null
+  edgeId: string | null
+  cornerInPlace: boolean
+  edgeInPlace: boolean
+}
+
+// ============================================================
+// CubeState 包装
+// ============================================================
+
+export function createSolvedCubeState(): CubeState {
+  const cube = new Cube()
+  return {
+    cube,
+    asString: () => cube.asString(),
+    move: (move: string) => {
+      const newCube = new Cube(cube)
+      newCube.move(move)
+      return createCubeState(newCube)
+    },
+    clone: () => createCubeState(new Cube(cube)),
+    isSolved: () => cube.isSolved(),
+  }
+}
+
+function createCubeState(cube: Cube): CubeState {
+  return {
+    cube,
+    asString: () => cube.asString(),
+    move: (move: string) => {
+      const newCube = new Cube(cube)
+      newCube.move(move)
+      return createCubeState(newCube)
+    },
+    clone: () => createCubeState(newCube(cube)),
+    isSolved: () => cube.isSolved(),
+  }
+}
+
+export function applyScramble(state: CubeState, scramble: string): CubeState {
+  return state.move(scramble)
+}
+
+// ============================================================
+// 状态分析函数
+// ============================================================
+
+/**
+ * 获取cubejs状态字符串中指定位置的贴纸
+ *
+ * 状态格式: UUUUUUUUURRRRRRRRRFFFFFFFFFDDDDDDDDDLLLLLLLLLBBBBBBBBB
+ * U: 0-8, R: 9-17, F: 18-26, D: 27-35, L: 36-44, B: 45-53
+ *
+ * 每个面的3x3网格:
+ * 0 1 2
+ *  3 4 5
+ * 6 7 8
+ */
+
+const FACE_OFFSETS: Record<string, number> = { 'U': 0, 'R': 9, 'F': 18, 'D': 27, 'L': 36, 'B': 45 }
+
+// 位置映射 - 各个块的贴纸位置
+const EDGE_POSITIONS: Record<string, number[]> = {
+  // UF, UL, UB, UR (U层棱)
+  'UF': [7, 19],    // U[7]=7, F[1]=18+1
+  'UL': [3, 37],    // U[3]=3, L[1]=36+1
+  'UB': [1, 46],    // U[1]=1, B[1]=45+1
+  'UR': [5, 10],    // U[5]=5, R[1]=9+1
+
+  // DF, DL, DB, DR (D层棱)
+  'DF': [28, 25],   // D[1]=27+1, F[7]=18+7
+  'DL': [30, 43],   // D[3]=27+3, L[7]=36+7
+  'DB': [32, 52],   // D[5]=27+5, B[7]=45+7
+  'DR': [34, 16],   // D[7]=27+7, R[7]=9+7
+
+  // FR, FL, BL, BR (中间层棱)
+  'FR': [23, 12],   // F[5]=18+5, R[3]=9+3
+  'FL': [21, 41],   // F[3]=18+3, L[5]=36+5
+  'BL': [50, 39],   // B[5]=45+5, L[3]=36+3
+  'BR': [48, 14],   // B[3]=45+3, R[5]=9+5
+}
+
+const EDGE_COLORS: Record<string, string[]> = {
+  'UF': ['U', 'F'], 'UL': ['U', 'L'], 'UB': ['U', 'B'], 'UR': ['U', 'R'],
+  'DF': ['D', 'F'], 'DL': ['D', 'L'], 'DB': ['D', 'B'], 'DR': ['D', 'R'],
+  'FR': ['F', 'R'], 'FL': ['F', 'L'], 'BL': ['B', 'L'], 'BR': ['B', 'R'],
+}
+
+// 角块位置映射 [U/D面位置, 侧面1位置, 侧面2位置]
+// 使用 face_offset + index 的方式计算
+const CORNER_POSITIONS: Record<string, number[]> = {
+  // U层角块
+  'URF': [8, 9, 20],    // U[8]=8, R[0]=9+0, F[2]=18+2
+  'UFL': [6, 18, 38],   // U[6]=6, F[0]=18+0, L[2]=36+2
+  'ULB': [0, 36, 47],   // U[0]=0, L[0]=36+0, B[2]=45+2
+  'UBR': [2, 45, 11],   // U[2]=2, B[0]=45+0, R[2]=9+2
+
+  // D层角块
+  'DFR': [29, 26, 15],  // D[2]=27+2, F[8]=18+8, R[6]=9+6
+  'DLF': [27, 44, 24],  // D[0]=27+0, L[8]=36+8, F[6]=18+6
+  'DBL': [33, 53, 42],  // D[6]=27+6, B[8]=45+8, L[6]=36+6
+  'DRB': [35, 17, 51],  // D[8]=27+8, R[8]=9+8, B[6]=45+6
+}
+
+const CORNER_COLORS: Record<string, string[]> = {
+  'URF': ['U', 'R', 'F'], 'UFL': ['U', 'F', 'L'], 'ULB': ['U', 'L', 'B'], 'UBR': ['U', 'B', 'R'],
+  'DFR': ['D', 'F', 'R'], 'DLF': ['D', 'L', 'F'], 'DBL': ['D', 'B', 'L'], 'DRB': ['D', 'R', 'B'],
+}
+
+// F2L槽位对应的角块和棱块
+const F2L_SLOT_PAIRS: Record<string, { corner: string; edge: string }> = {
+  'FR': { corner: 'DFR', edge: 'FR' },
+  'FL': { corner: 'DLF', edge: 'FL' },
+  'BL': { corner: 'DBL', edge: 'BL' },
+  'BR': { corner: 'DRB', edge: 'BR' },
+}
+
+const COLOR_TO_FACE: Record<string, string> = {
+  'U': '白', 'R': '红', 'F': '绿', 'D': '黄', 'L': '橙', 'B': '蓝',
+}
+
+/**
+ * 获取指定位置的贴纸颜色
+ */
+function getStickerAt(state: string, face: string, index: number): string {
+  return state[FACE_OFFSETS[face] + index]
+}
+
+/**
+ * 检查D面是否完成Cross（四个D面棱块都在D面且朝向正确）
+ */
+export function isCrossComplete(state: CubeState): boolean {
+  const s = state.asString()
+
+  // D面的四个棱块位置: DF[0], DL[0], DB[0], DR[0]
+  const dEdges = [
+    { pos: EDGE_POSITIONS.DF, colors: EDGE_COLORS.DF },
+    { pos: EDGE_POSITIONS.DL, colors: EDGE_COLORS.DL },
+    { pos: EDGE_POSITIONS.DB, colors: EDGE_COLORS.DB },
+    { pos: EDGE_POSITIONS.DR, colors: EDGE_COLORS.DR },
+  ]
+
+  let correctCount = 0
+
+  for (const edge of dEdges) {
+    const color1 = s[edge.pos[0]]
+    const color2 = s[edge.pos[1]]
+
+    // 检查是否在正确位置且朝向正确
+    // D面贴纸应该是D，侧面贴纸应该匹配对应的侧面
+    if (color1 === edge.colors[0] && color2 === edge.colors[1]) {
+      correctCount++
+    }
+  }
+
+  return correctCount === 4
+}
+
+/**
+ * 获取所有D层棱块的状态
+ */
+export function getDEdges(state: CubeState): Array<{
+  edge: string
+  currentColors: string[]
+  targetColors: string[]
+  inPlace: boolean
+  flipped: boolean
+}> {
+  const s = state.asString()
+  const edges = ['DF', 'DL', 'DB', 'DR'] as const
+
+  return edges.map(edge => {
+    const pos = EDGE_POSITIONS[edge]
+    const currentColors = [s[pos[0]], s[pos[1]]]
+    const targetColors = EDGE_COLORS[edge]
+
+    // 检查是否在正确位置
+    const inPlace = pos[0] === 27 && pos[1] >= 18 && pos[1] <= 26 // 在D面
+
+    // 检查朝向：D面颜色应该在D面
+    const flipped = currentColors[0] !== 'D'
+
+    return { edge, currentColors, targetColors, inPlace, flipped }
+  })
+}
+
+/**
+ * 检查两个数组是否有相同的元素（忽略顺序）
+ */
+function hasSameElements<T>(a: T[], b: T[]): boolean {
+  if (a.length !== b.length) return false
+  const sortedA = [...a].sort()
+  const sortedB = [...b].sort()
+  return sortedA.every((val, i) => val === sortedB[i])
+}
+
+/**
+ * 查找指定颜色的角块在哪里
+ * @param state 魔方状态
+ * @param targetColors 目标角块的颜色 [color1, color2, color3]
+ * @returns 位置名称和朝向
+ */
+function findCorner(state: CubeState, targetColors: string[]): { location: string | null; orientation: number } {
+  const s = state.asString()
+
+  for (const [loc, pos] of Object.entries(CORNER_POSITIONS)) {
+    const colors = [s[pos[0]], s[pos[1]], s[pos[2]]]
+    // 检查颜色是否完全匹配（忽略顺序）
+    if (hasSameElements(colors, targetColors)) {
+      // 计算朝向
+      // 对于U层角块，检查U颜色是否在U面位置
+      // 对于D层角块，检查D颜色是否在D面位置
+      let primaryColor = targetColors.includes('U') ? 'U' : 'D'
+      if (primaryColor === 'D' && !targetColors.includes('D')) {
+        primaryColor = 'U' // 如果没有D，说明是U层角块被打乱
+      }
+
+      // 朝向0: 主色在正确位置(pos[0])
+      // 朝向1: 主色在pos[1]
+      // 朝向2: 主色在pos[2]
+      let orient = 0
+      if (s[pos[0]] === primaryColor) orient = 0
+      else if (s[pos[1]] === primaryColor) orient = 1
+      else orient = 2
+
+      return { location: loc, orientation: orient }
+    }
+  }
+
+  return { location: null, orientation: 0 }
+}
+
+/**
+ * 查找指定颜色的棱块在哪里
+ * @param state 魔方状态
+ * @param targetColors 目标棱块的颜色 [color1, color2]
+ * @returns 位置名称和朝向
+ */
+function findEdge(state: CubeState, targetColors: string[]): { location: string | null; orientation: number } {
+  const s = state.asString()
+
+  for (const [loc, pos] of Object.entries(EDGE_POSITIONS)) {
+    const colors = [s[pos[0]], s[pos[1]]]
+    // 检查颜色是否匹配（可以是翻转的）
+    if ((colors[0] === targetColors[0] && colors[1] === targetColors[1]) ||
+        (colors[0] === targetColors[1] && colors[1] === targetColors[0])) {
+      // 朝向: 0=正确, 1=翻转
+      const orient = colors[0] === targetColors[0] ? 0 : 1
+      return { location: loc, orientation: orient }
+    }
+  }
+
+  return { location: null, orientation: 0 }
+}
+
+/**
+ * 分析F2L槽位状态
+ */
+export function analyzeF2LSlot(state: CubeState, slot: 'FR' | 'FL' | 'BL' | 'BR'): {
+  slot: string
+  corner: {
+    found: boolean
+    location: string | null      // 当前位置 (如 'URF', 'DFR')
+    orientation: number          // 0=正确, 1=顺时针扭曲, 2=逆时针扭曲
+    inPlace: boolean             // 是否在目标槽位且朝向正确
+  }
+  edge: {
+    found: boolean
+    location: string | null      // 当前位置 (如 'UF', 'FR')
+    orientation: number          // 0=正确, 1=翻转
+    inPlace: boolean             // 是否在目标槽位且朝向正确
+  }
+  solved: boolean                // 槽位是否完成
+} {
+  const pair = F2L_SLOT_PAIRS[slot]
+  const targetCorner = pair.corner
+  const targetEdge = pair.edge
+  const targetCornerColors = CORNER_COLORS[targetCorner]
+  const targetEdgeColors = EDGE_COLORS[targetEdge]
+
+  // 查找角块
+  const cornerResult = findCorner(state, targetCornerColors)
+
+  // 查找棱块
+  const edgeResult = findEdge(state, targetEdgeColors)
+
+  const cornerInPlace = cornerResult.location === targetCorner && cornerResult.orientation === 0
+  const edgeInPlace = edgeResult.location === targetEdge && edgeResult.orientation === 0
+
+  return {
+    slot,
+    corner: {
+      found: cornerResult.location !== null,
+      location: cornerResult.location,
+      orientation: cornerResult.orientation,
+      inPlace: cornerInPlace,
+    },
+    edge: {
+      found: edgeResult.location !== null,
+      location: edgeResult.location,
+      orientation: edgeResult.orientation,
+      inPlace: edgeInPlace,
+    },
+    solved: cornerInPlace && edgeInPlace,
+  }
+}
+
+/**
+ * 检查所有F2L槽位是否完成
+ */
+export function isF2LComplete(state: CubeState): boolean {
+  const slots: Array<'FR' | 'FL' | 'BL' | 'BR'> = ['FR', 'FL', 'BL', 'BR']
+  for (const slot of slots) {
+    const analysis = analyzeF2LSlot(state, slot)
+    if (!analysis.solved) {
+      return false
+    }
+  }
+  return true
+}
+
+// ============================================================
+// Cross求解器
+// ============================================================
+
+/**
+ * DFS搜索求解Cross（迭代加深）
+ */
+export function solveCross(state: CubeState, maxDepth: number = 8): string {
+  if (isCrossComplete(state)) {
+    return ''
+  }
+
+  const moves = ['U', "U'", 'U2', 'D', "D'", 'D2', 'F', "F'", 'F2', 'R', "R'", 'R2', 'L', "L'", 'L2', 'B', "B'", 'B2']
+
+  // 剪枝函数：检查move是否应该被跳过
+  function shouldSkip(move: string, lastMove: string): boolean {
+    const lastBase = lastMove.charAt(0)
+    const moveBase = move.charAt(0)
+    const lastMod = lastMove.slice(1)
+    const moveMod = move.slice(1)
+
+    // 不同面，允许
+    if (lastBase !== moveBase) return false
+
+    // 同一面：检查是否冗余
+    // U + U = U2，应该直接用U2
+    if (lastMod === '' && moveMod === '') return true
+
+    // U' + U' = U2，应该直接用U2
+    if (lastMod === "'" && moveMod === "'") return true
+
+    // U + U' = 无变化，撤销
+    if (lastMod === '' && moveMod === "'") return true
+    if (lastMod === "'" && moveMod === '') return true
+
+    // U2 + U2 = 无变化，撤销
+    if (lastMod === '2' && moveMod === '2') return true
+
+    // U2 + U = U'，应该直接用U'
+    if (lastMod === '2' && moveMod === '') return true
+
+    // U2 + U' = U，应该直接用U
+    if (lastMod === '2' && moveMod === "'") return true
+
+    // U + U2 = U'，应该直接用U'
+    if (lastMod === '' && moveMod === '2') return true
+
+    // U' + U2 = U，应该直接用U
+    if (lastMod === "'" && moveMod === '2') return true
+
+    return false
+  }
+
+  function dfs(currentState: CubeState, path: string[], depth: number): string | null {
+    if (isCrossComplete(currentState)) {
+      return path.join(' ')
+    }
+    if (depth <= 0) {
+      return null
+    }
+
+    for (const move of moves) {
+      // 剪枝：跳过冗余移动
+      if (path.length > 0 && shouldSkip(move, path[path.length - 1])) {
+        continue
+      }
+
+      const newState = currentState.move(move)
+      const newPath = [...path, move]
+
+      const result = dfs(newState, newPath, depth - 1)
+      if (result) {
+        return result
+      }
+    }
+
+    return null
+  }
+
+  // 迭代加深：从深度1开始，逐步增加到maxDepth
+  for (let d = 1; d <= maxDepth; d++) {
+    const result = dfs(state, [], d)
+    if (result) {
+      return result
+    }
+  }
+
+  return ''
+}
+
+// ============================================================
+// F2L求解器
+// ============================================================
+
+/**
+ * 检��Cross是否完整（D面4个棱块）
+ */
+export function checkCrossIntact(state: CubeState): boolean {
+  const s = state.asString()
+  const D_OFFSET = 27
+
+  // D面4个棱块位置应该都是D
+  return s[D_OFFSET + 1] === 'D' &&
+         s[D_OFFSET + 3] === 'D' &&
+         s[D_OFFSET + 5] === 'D' &&
+         s[D_OFFSET + 7] === 'D'
+}
+
+/**
+ * F2L公式库（标准公式，执行后Cross保持完整）
+ * 格式: { slot: 'FR', case: '描述', algorithm: '公式' }
+ *
+ * 这些公式来自标准CFOP方法
+ */
+const F2L_ALGORITHMS: Array<{
+  slot: 'FR' | 'FL' | 'BL' | 'BR'
+  case: string
+  algorithm: string
+  description: string
+}> = [
+  // ===== FR槽位公式 =====
+  { slot: 'FR', case: 'basic_insert', algorithm: "U R U' R'", description: '基本插入' },
+  { slot: 'FR', case: 'sexy_move', algorithm: "R U R' U'", description: 'Sexy move' },
+  { slot: 'FR', case: 'insert_from_back', algorithm: "U' R' U R", description: '从后方插入' },
+  { slot: 'FR', case: 'f2l_1', algorithm: "R U R' U' R U R'", description: 'F2L #1' },
+  { slot: 'FR', case: 'f2l_2', algorithm: "U' R U' R' U R U' R'", description: 'F2L #2' },
+  { slot: 'FR', case: 'f2l_3', algorithm: "R U2 R' U' R U R'", description: 'F2L #3' },
+  { slot: 'FR', case: 'keyhole', algorithm: "R U' R' U R U' R'", description: 'Keyhole' },
+  { slot: 'FR', case: 'sledgehammer', algorithm: "R' F R F'", description: 'Sledgehammer' },
+
+  // ===== FL槽位公式（FR的镜像） =====
+  { slot: 'FL', case: 'basic_insert', algorithm: "U' L' U L", description: '基本插入' },
+  { slot: 'FL', case: 'sexy_move', algorithm: "L' U' L U", description: 'Sexy move' },
+  { slot: 'FL', case: 'insert_from_back', algorithm: "U L U' L'", description: '从后方插入' },
+  { slot: 'FL', case: 'f2l_1', algorithm: "L' U L U L' U' L'", description: 'F2L #1' },
+  { slot: 'FL', case: 'f2l_2', algorithm: "U L U' L U' L' U L'", description: 'F2L #2' },
+  { slot: 'FL', case: 'keyhole', algorithm: "L U L' U' L U L'", description: 'Keyhole' },
+  { slot: 'FL', case: 'sledgehammer', algorithm: "L F' L' F", description: 'Sledgehammer' },
+
+  // ===== BL槽位公式 =====
+  { slot: 'BL', case: 'basic_insert', algorithm: "U L U' L'", description: '基本插入' },
+  { slot: 'BL', case: 'sexy_move', algorithm: "L U L' U'", description: 'Sexy move' },
+  { slot: 'BL', case: 'insert_from_back', algorithm: "U' L' U L", description: '从后方插入' },
+  { slot: 'BL', case: 'f2l_1', algorithm: "L' U L U' L' U' L'", description: 'F2L #1' },
+  { slot: 'BL', case: 'keyhole', algorithm: "L U L' U' L U L'", description: 'Keyhole' },
+
+  // ===== BR槽位公式 =====
+  { slot: 'BR', case: 'basic_insert', algorithm: "U' R' U R", description: '基本插入' },
+  { slot: 'BR', case: 'sexy_move', algorithm: "R' U' R U", description: 'Sexy move' },
+  { slot: 'BR', case: 'insert_from_back', algorithm: "U R U' R'", description: '从后方插入' },
+  { slot: 'BR', case: 'f2l_1', algorithm: "R U' R' U R U' R'", description: 'F2L #1' },
+  { slot: 'BR', case: 'keyhole', algorithm: "R' U' R U R U' R'", description: 'Keyhole' },
+]
+
+/**
+ * 尝试用公式库求解单个F2L槽位
+ * @returns 成功的公式，如果都失败则返回空字符串
+ */
+export function solveF2LSlot(state: CubeState, slot: 'FR' | 'FL' | 'BL' | 'BR'): string {
+  // 如果已经完成，返回空
+  if (isF2LSlotComplete(state, slot)) {
+    return ''
+  }
+
+  // 获取该槽位的所有公式
+  const formulas = F2L_ALGORITHMS.filter(f => f.slot === slot)
+
+  // 尝试每个公式
+  for (const formula of formulas) {
+    const testState = state.move(formula.algorithm)
+
+    // 验证：F2L槽位完成 + Cross完整
+    if (isF2LSlotComplete(testState, slot) && checkCrossIntact(testState)) {
+      return formula.algorithm
+    }
+  }
+
+  // 如果没有找到合适的公式，返回空字符串
+  return ''
+}
+
+/**
+ * 检查指定F2L槽位是否完成
+ */
+function isF2LSlotComplete(state: CubeState, slot: 'FR' | 'FL' | 'BL' | 'BR'): boolean {
+  const analysis = analyzeF2LSlot(state, slot)
+  return analysis.solved
+}
+
+/**
+ * 求解所有F2L槽位
+ * @returns 所有F2L步骤的连接字符串
+ */
+export function solveF2L(state: CubeState): {
+  solution: string
+  steps: number
+  slots: {
+    slot: string
+    solution: string
+    solved: boolean
+  }[]
+} {
+  const slots: Array<'FR' | 'FL' | 'BL' | 'BR'> = ['FR', 'FL', 'BL', 'BR']
+  const result: typeof solveF2L.prototype.result = []
+  let currentState = state
+  let fullSolution: string[] = []
+
+  for (const slot of slots) {
+    const slotSolution = solveF2LSlot(currentState, slot)
+    if (slotSolution) {
+      currentState = currentState.move(slotSolution)
+      fullSolution.push(slotSolution)
+    }
+
+    const analysis = analyzeF2LSlot(currentState, slot)
+    result.push({
+      slot,
+      solution: slotSolution,
+      solved: analysis.solved,
+    })
+  }
+
+  return {
+    solution: fullSolution.join(' '),
+    steps: fullSolution.length,
+    slots: result,
+  }
+}
+
+// ============================================================
+// 导出
+// ============================================================
+
+// solveCross already exported above

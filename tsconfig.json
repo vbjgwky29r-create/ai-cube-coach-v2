@@ -30,5 +30,11 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules"]
+  "exclude": [
+    "node_modules",
+    "**/archive/**",
+    "scripts/**",
+    "lib/cube/f2l-tiered-solver.ts",
+    "lib/ube/f2l-tiered-solver.ts"
+  ]
 }

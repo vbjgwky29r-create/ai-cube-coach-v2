@@ -1,86 +1,153 @@
+﻿/**
+ * CFOP 姹傝В API
+ *
+ * 鎺ユ敹鎵撲贡鍏紡锛岃繑鍥?CFOP 鍒嗛樁娈佃В娉?
+ *
+ * POST /api/cube/cfop-solve
+ * Body: { scramble: string }
+ */
+
 import { NextRequest, NextResponse } from 'next/server'
-import { solveCFOP, type CFOPSolution } from '@/lib/cube/cfop-solver'
-import { applyMoveToCoordinateState, isCubeSolved, createSolvedCube } from '@/lib/cube/cube-coordinate-system'
-// @ts-expect-error - cubejs doesn't have type definitions
-import Cube from 'cubejs'
+import {
+  applyScramble,
+  createSolvedCubeState,
+  isCrossComplete,
+  isF2LComplete,
+  solveCFOPDetailedVerified,
+} from '@/lib/cube/cfop-latest'
+
+/**
+ * 楠岃瘉榄旀柟鍏紡鏍煎紡
+ */
+function validateFormula(formula: string): boolean {
+  if (!formula || formula.trim().length === 0) {
+    return false
+  }
+
+  // 鍩烘湰妫€鏌ワ細鍙寘鍚悎娉曠殑榄旀柟璁版硶瀛楃
+  const validPattern = /^[\sURFDLBEMSXYZurfdlbemsxyz'2]+$/
+  return validPattern.test(formula)
+}
+
+/**
+ * 瑙ｆ瀽骞舵爣鍑嗗寲鍏紡
+ * 淇濈暀瀹借浆锛坮/l/u/d/f/b锛夊拰涓眰杞紙M/E/S锛夌殑澶у皬鍐欏尯鍒?
+ */
+function normalizeFormula(formula: string): string {
+  return formula
+    .trim()
+    .replace(/\s+/g, ' ')
+    // 鍙皢澶у啓鍩虹杞綋锛圧/L/U/D/F/B锛夋爣鍑嗗寲锛屼繚鐣欏杞拰涓眰杞殑灏忓啓
+    .replace(/\b([URFDLB])\b/g, (match) => match.toUpperCase())
+}
 
 export async function POST(request: NextRequest) {
   try {
     const { scramble } = await request.json()
 
-    if (!scramble || typeof scramble !== 'string') {
+    // 楠岃瘉杈撳叆
+    if (!scramble) {
       return NextResponse.json(
-        { error: '请提供有效的打乱公式' },
+        { error: '缂哄皯鎵撲贡鍏紡' },
         { status: 400 }
       )
     }
 
-    const trimmedScramble = scramble.trim()
-    if (!trimmedScramble) {
+    const normalized = normalizeFormula(scramble)
+
+    if (!validateFormula(normalized)) {
       return NextResponse.json(
-        { error: '打乱公式不能为空' },
+        { error: 'Invalid scramble notation' },
         { status: 400 }
       )
     }
 
-    console.log('[CFOP] Generating solution for scramble:', trimmedScramble)
-    
-    // 获取 Kociemba 最优解作为参考
-    let optimalMoves = 22
-    let optimalSolution = ''
-    try {
-      Cube.initSolver()
-      const cube = new Cube()
-      cube.move(trimmedScramble)
-      optimalSolution = cube.solve()
-      optimalMoves = optimalSolution.split(' ').filter((s: string) => s).length
-      console.log('[CFOP] Optimal solution:', optimalMoves, 'moves -', optimalSolution)
-    } catch (e) {
-      console.error('[CFOP] Failed to get optimal solution:', e)
+    // 姹傝В - 浣跨敤楠岃瘉鐗堣缁嗘眰瑙ｅ櫒
+    const solution = solveCFOPDetailedVerified(normalized)
+    const scrambledState = applyScramble(createSolvedCubeState(), normalized)
+    const afterCross = solution.cross.moves ? scrambledState.move(solution.cross.moves) : scrambledState
+    const afterF2L = solution.f2l.moves ? afterCross.move(solution.f2l.moves) : afterCross
+    const afterOLL = solution.oll.moves ? afterF2L.move(solution.oll.moves) : afterF2L
+    const afterPLL = solution.pll.moves ? afterOLL.move(solution.pll.moves) : afterOLL
+
+    const stageValidation = {
+      crossCompleteAfterCross: isCrossComplete(afterCross),
+      f2lCompleteAfterF2L: isF2LComplete(afterF2L),
+      solvedAfterFull: afterPLL.isSolved(),
     }
-    
-    // 使用专业 CFOP 求解器
-    const solution = solveCFOP(trimmedScramble)
-    
-    // 使用坐标系验证解法
-    let verified = false
-    try {
-      let state = createSolvedCube()
-      const scrambleMoves = trimmedScramble.split(/\s+/).filter(m => m)
-      for (const move of scrambleMoves) {
-        state = applyMoveToCoordinateState(state, move)
-      }
-      const allMoves = solution.fullSolution.split(/\s+/).filter(m => m)
-      for (const move of allMoves) {
-        state = applyMoveToCoordinateState(state, move)
-      }
-      verified = isCubeSolved(state)
-      console.log('[CFOP] Solution verified:', verified)
-    } catch (e) {
-      console.error('[CFOP] Verification failed:', e)
-    }
-    
-    // 添加最优解参考和验证状态
-    const enhancedSolution: CFOPSolution & { optimalReference: number; isReferenceSolution: boolean; verified: boolean } = {
-      ...solution,
-      optimalReference: optimalMoves,
-      isReferenceSolution: false, // 这是真正的算法求解，不是 AI 生成的参考
-      verified
-    }
+    const verified = solution.verified && stageValidation.solvedAfterFull
 
     return NextResponse.json({
       success: true,
-      scramble: trimmedScramble,
-      solution: enhancedSolution,
-      optimalSolution: optimalSolution,
+      scramble: normalized,
+      solution: {
+        cross: {
+          moves: solution.cross.moves,
+          steps: solution.cross.steps,
+        },
+        f2l: {
+          moves: solution.f2l.moves,
+          steps: solution.f2l.steps,
+          slots: solution.f2l.slots,
+        },
+        oll: {
+          moves: solution.oll.moves,
+          steps: solution.oll.steps,
+          caseId: solution.oll.caseId,
+          caseName: solution.oll.caseName,
+        },
+        pll: {
+          moves: solution.pll.moves,
+          steps: solution.pll.steps,
+          caseId: solution.pll.caseId,
+          caseName: solution.pll.caseName,
+        },
+        fullSolution: solution.solution,
+        totalSteps: solution.totalSteps,
+      },
+      verified,
+      stageValidation,
     })
-  } catch (error) {
-    console.error('CFOP solve error:', error)
-    const errorMessage = error instanceof Error ? error.message : String(error)
-    console.error('Error details:', errorMessage)
+
+  } catch (error: any) {
+    console.error('[CFOP Solve API] Error:', error)
+
     return NextResponse.json(
-      { error: '生成解法失败，请稍后重试', details: errorMessage },
+      {
+        error: error.message || '姹傝В澶辫触',
+        success: false,
+      },
       { status: 500 }
     )
   }
 }
+
+/**
+ * GET 璇锋眰 - 杩斿洖 API 淇℃伅
+ */
+export async function GET() {
+  return NextResponse.json({
+    endpoint: '/api/cube/cfop-solve',
+    method: 'POST',
+    description: 'CFOP 姹傝В鍣?- 鍩轰簬cubejs鐨勫垎闃舵姹傝В',
+    parameters: {
+      scramble: {
+        type: 'string',
+        description: '鎵撲贡鍏紡',
+        example: "D L2 B2 U2 F2 R2 D R2 D2 U' B2 L B' R' B D' U2 B' U' F L",
+      },
+    },
+    response: {
+      success: 'boolean',
+      solution: {
+        cross: '鍗佸瓧瑙ｆ硶',
+        f2l: 'F2L stage moves',
+        oll: 'OLL stage moves',
+        pll: 'PLL stage moves',
+        fullSolution: 'full CFOP solution',
+        totalSteps: 'total move count',
+      },
+    },
+  })
+}
+

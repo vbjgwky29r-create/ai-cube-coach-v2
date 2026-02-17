@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { analyzeSolution } from '@/lib/cube/analyzer'
-import { analyzeSolutionDetailed } from '@/lib/cube/analyzer-v2'
 import { analyzeSolutionEnhanced } from '@/lib/cube/analyzer-v3'
 import { parseFormula } from '@/lib/cube/parser'
+import {
+  applyScramble as applyScrambleCFOP,
+  createSolvedCubeState,
+  isCrossComplete,
+  isF2LComplete,
+  solveCFOPDetailedVerified,
+} from '@/lib/cube/cfop-latest'
 import { logger, generateRequestId } from '@/lib/utils/logger'
 
 // 简单的速率限制存储（生产环境应使用 Redis 等）
@@ -107,6 +112,284 @@ function validateInput(scramble: string, solution: string): { valid: boolean; er
   return { valid: true }
 }
 
+function analyzeUserStages(scramble: string, userSolution: string) {
+  const parsed = parseFormula(userSolution)
+  const moves = parsed.moves.map((m: any) => m.notation || m.move || '').filter(Boolean)
+  let state = applyScrambleCFOP(createSolvedCubeState(), scramble)
+
+  let crossAt = -1
+  let f2lAt = -1
+  let ollAt = -1
+  let solvedAt = -1
+
+  for (let i = 0; i < moves.length; i++) {
+    state = state.move(moves[i])
+
+    if (crossAt < 0 && isCrossComplete(state)) {
+      crossAt = i + 1
+    }
+    if (crossAt >= 0 && f2lAt < 0 && isF2LComplete(state)) {
+      f2lAt = i + 1
+    }
+    if (f2lAt >= 0 && ollAt < 0) {
+      const uFace = state.asString().substring(0, 9)
+      if (uFace === 'UUUUUUUUU') {
+        ollAt = i + 1
+      }
+    }
+    if (solvedAt < 0 && state.isSolved()) {
+      solvedAt = i + 1
+      break
+    }
+  }
+
+  const total = moves.length
+  const crossSteps = crossAt > 0 ? crossAt : 0
+  const f2lSteps = f2lAt > 0 && crossAt > 0 ? Math.max(0, f2lAt - crossAt) : 0
+  const ollSteps = ollAt > 0 && f2lAt > 0 ? Math.max(0, ollAt - f2lAt) : 0
+  const pllSteps = solvedAt > 0 && ollAt > 0 ? Math.max(0, solvedAt - ollAt) : 0
+
+  return {
+    userSolved: solvedAt > 0,
+    solvedAt,
+    totalSteps: total,
+    stages: {
+      cross: crossSteps,
+      f2l: f2lSteps,
+      oll: ollSteps,
+      pll: pllSteps,
+    },
+  }
+}
+
+function buildStageComparison(user: { cross: number; f2l: number; oll: number; pll: number }, cfop: { cross: number; f2l: number; oll: number; pll: number }) {
+  const stageOrder: Array<'cross' | 'f2l' | 'oll' | 'pll'> = ['cross', 'f2l', 'oll', 'pll']
+  return stageOrder.map((stage) => {
+    const userSteps = user[stage]
+    const optimalSteps = cfop[stage]
+    const gap = userSteps - optimalSteps
+    let suggestion = 'Keep current approach and improve turning speed.'
+    if (gap >= 6) suggestion = 'Large step overhead: practice canonical cases and reduce regrips/rotations.'
+    else if (gap >= 3) suggestion = 'Some overhead: refine recognition and execution flow.'
+    else if (gap <= -2) suggestion = 'Efficient stage; keep stability and lookahead.'
+
+    return {
+      stage: stage.toUpperCase(),
+      userSteps,
+      optimalSteps,
+      gap,
+      suggestion,
+    }
+  })
+}
+
+type StageKey = 'cross' | 'f2l' | 'oll' | 'pll'
+
+type CoachRecommendation = {
+  priority: number
+  title: string
+  area: string
+  currentStatus: string
+  targetStatus: string
+  estimatedImprovement: string
+  effort: 'low' | 'medium' | 'high'
+  actionItems: string[]
+  resourceLinks: Array<{ title: string; url: string }>
+  timeToSeeResults: string
+}
+
+function resourcesForArea(area: string): Array<{ title: string; url: string }> {
+  if (area === 'Cross') {
+    return [
+      { title: 'J Perm - Cross Fundamentals', url: 'https://jperm.net/3x3/cfop' },
+      { title: 'CubeSkills - Cross Training', url: 'https://www.cubeskills.com/categories/the-cross' },
+    ]
+  }
+  if (area === 'F2L') {
+    return [
+      { title: 'J Perm - Intuitive F2L', url: 'https://jperm.net/3x3/cfop/f2l' },
+      { title: 'CubeSkills - F2L', url: 'https://www.cubeskills.com/categories/f2l' },
+      { title: 'F2L Cases & Examples', url: 'https://www.speedsolving.com/wiki/index.php/F2L' },
+    ]
+  }
+  if (area === 'OLL') {
+    return [
+      { title: 'J Perm - 2-Look OLL', url: 'https://jperm.net/algs/2look/oll' },
+      { title: 'CubeSkills - OLL', url: 'https://www.cubeskills.com/categories/oll' },
+    ]
+  }
+  if (area === 'PLL') {
+    return [
+      { title: 'J Perm - 2-Look PLL', url: 'https://jperm.net/algs/2look/pll' },
+      { title: 'PLL Case Reference (CN)', url: 'http://www.mf100.org/cfop/pll.htm' },
+      { title: 'CubeSkills - PLL', url: 'https://www.cubeskills.com/categories/pll' },
+    ]
+  }
+  return [
+    { title: 'CFOP Learning Path', url: 'https://jperm.net/3x3/cfop' },
+    { title: 'CubeSkills', url: 'https://www.cubeskills.com/' },
+  ]
+}
+
+function buildCoachRecommendations(params: {
+  userSolved: boolean
+  userStages: Record<StageKey, number>
+  cfopStages: Record<StageKey, number>
+  userTotal: number
+  cfopTotal: number
+}): CoachRecommendation[] {
+  const recommendations: CoachRecommendation[] = []
+  const weights: Record<StageKey, number> = { cross: 1.1, f2l: 1.6, oll: 0.9, pll: 1.2 }
+  const stages: StageKey[] = ['cross', 'f2l', 'oll', 'pll']
+  const scored = stages
+    .map((stage) => {
+      const user = params.userStages[stage] || 0
+      const ref = params.cfopStages[stage] || 0
+      const gap = user - ref
+      const ratio = ref > 0 ? gap / ref : 0
+      return {
+        stage,
+        user,
+        ref,
+        gap,
+        score: gap > 0 ? gap * weights[stage] + ratio * 4 : 0,
+      }
+    })
+    .sort((a, b) => b.score - a.score)
+
+  let priority = 1
+  if (!params.userSolved) {
+    recommendations.push({
+      priority: priority++,
+      title: '先把完整还原成功率拉到 100%',
+      area: 'Accuracy',
+      currentStatus: '当前复盘检测到存在未完整还原的情况',
+      targetStatus: '连续 20 次都能完整还原，再压缩步数',
+      estimatedImprovement: '先消除 DNF 风险',
+      effort: 'medium',
+      actionItems: [
+        '每次复盘先做分段验收：Cross -> F2L -> OLL -> PLL',
+        '每个阶段结束都停一下做口头检查，避免错误滚入下一阶段',
+        'PLL 只执行识别到的单公式，避免临场拼接多段公式',
+      ],
+      resourceLinks: resourcesForArea('Overall'),
+      timeToSeeResults: '2-3 天',
+    })
+  }
+
+  for (const item of scored.slice(0, 3)) {
+    if (item.gap <= 0) continue
+    if (item.stage === 'cross') {
+      recommendations.push({
+        priority: priority++,
+        title: 'Cross 检查与预判优化',
+        area: 'Cross',
+        currentStatus: `${item.user} 步（参考 ${item.ref} 步）`,
+        targetStatus: `稳定压到 ${item.ref + 1} 步以内`,
+        estimatedImprovement: `可节省约 ${item.gap} 步`,
+        effort: 'low',
+        actionItems: [
+          '观察阶段优先规划两条边，减少中途停顿',
+          '避免无效 U 调整与同面往返动作',
+          '训练“第一条边落位后第二条边不断拍”节奏',
+        ],
+        resourceLinks: resourcesForArea('Cross'),
+        timeToSeeResults: '3-5 天',
+      })
+    }
+    if (item.stage === 'f2l') {
+      recommendations.push({
+        priority: priority++,
+        title: 'F2L 走“转标态 -> 入槽”',
+        area: 'F2L',
+        currentStatus: `${item.user} 步（参考 ${item.ref} 步）`,
+        targetStatus: `先压到 ${item.ref + 3} 步，再追 ${item.ref + 1} 步`,
+        estimatedImprovement: `可节省约 ${item.gap} 步（最大瓶颈）`,
+        effort: 'high',
+        actionItems: [
+          '每次先评估四槽“转标态成本”，再决定先做哪个槽',
+          '前三槽允许适度 y 转体，减少 B/B\' 硬拧',
+          '一旦某槽完成，后续槽位不再破坏已完成槽',
+        ],
+        resourceLinks: resourcesForArea('F2L'),
+        timeToSeeResults: '1-2 周',
+      })
+    }
+    if (item.stage === 'oll') {
+      recommendations.push({
+        priority: priority++,
+        title: 'OLL 识别与执行流畅度',
+        area: 'OLL',
+        currentStatus: `${item.user} 步（参考 ${item.ref} 步）`,
+        targetStatus: `稳定在 ${item.ref + 1} 步以内`,
+        estimatedImprovement: `可节省约 ${item.gap} 步`,
+        effort: 'medium',
+        actionItems: [
+          '先锁定模式再出手，减少试错性 U 调整',
+          '高频 OLL 单独做 20 次连发训练',
+          '用同一套指法保持出手一致性',
+        ],
+        resourceLinks: resourcesForArea('OLL'),
+        timeToSeeResults: '5-7 天',
+      })
+    }
+    if (item.stage === 'pll') {
+      recommendations.push({
+        priority: priority++,
+        title: 'PLL 按形态识别单公式',
+        area: 'PLL',
+        currentStatus: `${item.user} 步（参考 ${item.ref} 步）`,
+        targetStatus: `稳定在 ${item.ref + 1} 步以内`,
+        estimatedImprovement: `可节省约 ${item.gap} 步`,
+        effort: 'medium',
+        actionItems: [
+          '先识别是三棱换/四棱换/角棱混换，再执行对应单公式',
+          '避免多段 fallback 链式执行',
+          '做 AUF + 单 PLL + AUF 的节奏训练',
+        ],
+        resourceLinks: resourcesForArea('PLL'),
+        timeToSeeResults: '4-7 天',
+      })
+    }
+  }
+
+  const totalGap = params.userTotal - params.cfopTotal
+  if (totalGap > 0 && recommendations.length < 3) {
+    recommendations.push({
+      priority: priority,
+      title: '总体步数压缩',
+      area: 'Overall',
+      currentStatus: `${params.userTotal} 步（参考 ${params.cfopTotal} 步）`,
+      targetStatus: `先达到 ${params.cfopTotal + 3} 步以内`,
+      estimatedImprovement: `可节省约 ${totalGap} 步`,
+      effort: 'medium',
+      actionItems: [
+        '先保证每阶段稳定，再做跨阶段提速',
+        '复盘每把中“最长停顿点”并单点修复',
+        '每 10 把统计一次阶段步数均值',
+      ],
+      resourceLinks: resourcesForArea('Overall'),
+      timeToSeeResults: '1 周',
+    })
+  }
+
+  return recommendations.slice(0, 5)
+}
+
+function buildWeeklyPlan(recommendations: CoachRecommendation[]) {
+  const primary = recommendations[0]
+  const secondary = recommendations[1] || recommendations[0]
+  return [
+    { day: 1, focus: primary?.area || 'F2L', durationMinutes: 30, goal: '先做低速准确率训练，确保阶段不出错' },
+    { day: 2, focus: primary?.area || 'F2L', durationMinutes: 30, goal: '固定一套动作流程，减少停顿' },
+    { day: 3, focus: secondary?.area || 'Cross', durationMinutes: 25, goal: '补齐第二瓶颈阶段识别与执行' },
+    { day: 4, focus: primary?.area || 'F2L', durationMinutes: 30, goal: '做分段计时，压缩阶段步数' },
+    { day: 5, focus: 'PLL/OLL', durationMinutes: 20, goal: '形态识别 + 单公式一把过' },
+    { day: 6, focus: 'Full Solve', durationMinutes: 35, goal: '整把复盘并记录阶段步数' },
+    { day: 7, focus: 'Review', durationMinutes: 20, goal: '对比本周首日，确认步数与稳定性提升' },
+  ]
+}
+
 export async function POST(req: NextRequest) {
   const requestId = generateRequestId()
   const startTime = Date.now()
@@ -135,7 +418,7 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const { scramble, solution, detailed = true, enhanced = true } = await req.json()
+    const { scramble, solution } = await req.json()
 
     // 验证输入存在
     if (!scramble || !solution) {
@@ -156,34 +439,87 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // 调用分析引擎
-    let result: any
-
-    if (enhanced && detailed) {
-      // 使用增强版分析
-      result = await analyzeSolutionEnhanced({
-        scramble: scramble.trim(),
-        userSolution: solution.trim(),
-      })
-    } else if (detailed) {
-      // 使用详细分析
-      result = await analyzeSolutionDetailed({
-        scramble: scramble.trim(),
-        userSolution: solution.trim(),
-      })
-    } else {
-      // 使用基础分析
-      result = await analyzeSolution({
-        scramble: scramble.trim(),
-        userSolution: solution.trim(),
-      })
+    // 先求解并验证完整 CFOP，再做分阶段对比建议
+    const cfop = solveCFOPDetailedVerified(scramble.trim())
+    const replayStart = applyScrambleCFOP(createSolvedCubeState(), scramble.trim())
+    const afterCross = cfop.cross.moves ? replayStart.move(cfop.cross.moves) : replayStart
+    const afterF2L = cfop.f2l.moves ? afterCross.move(cfop.f2l.moves) : afterCross
+    const afterOLL = cfop.oll.moves ? afterF2L.move(cfop.oll.moves) : afterF2L
+    const afterPLL = cfop.pll.moves ? afterOLL.move(cfop.pll.moves) : afterOLL
+    const cfopStageValidation = {
+      crossCompleteAfterCross: isCrossComplete(afterCross),
+      f2lCompleteAfterF2L: isF2LComplete(afterF2L),
+      solvedAfterFull: afterPLL.isSolved(),
     }
+    const cfopVerified = cfop.verified && cfopStageValidation.solvedAfterFull
+
+    if (!cfopVerified) {
+      logger.error('CFOP reference verification failed', { requestId, scramble: scramble.trim(), cfopStageValidation })
+      return NextResponse.json(
+        { error: 'CFOP reference solve failed verification; analysis aborted for safety.' },
+        { status: 500 }
+      )
+    }
+
+    // 调用分析引擎（增强版）
+    const result = await analyzeSolutionEnhanced({
+      scramble: scramble.trim(),
+      userSolution: solution.trim(),
+    })
+
+    const userStageInfo = analyzeUserStages(scramble.trim(), solution.trim())
+    const cfopStageSteps = {
+      cross: cfop.cross.steps,
+      f2l: cfop.f2l.steps,
+      oll: cfop.oll.steps,
+      pll: cfop.pll.steps,
+    }
+    const stageComparison = buildStageComparison(userStageInfo.stages, cfopStageSteps)
+    const coachRecommendations = buildCoachRecommendations({
+      userSolved: userStageInfo.userSolved,
+      userStages: userStageInfo.stages,
+      cfopStages: cfopStageSteps,
+      userTotal: userStageInfo.totalSteps,
+      cfopTotal: cfop.totalSteps,
+    })
+    const weeklyPlan = buildWeeklyPlan(coachRecommendations)
 
     const duration = Date.now() - startTime
     const steps = 'userSteps' in result.summary ? result.summary.userSteps : (result.summary as any).steps
     logger.api('POST', '/api/cube/analyze', 200, duration, { requestId, steps })
 
-    return NextResponse.json(result)
+    return NextResponse.json({
+      ...result,
+      cfopReference: {
+        scramble: scramble.trim(),
+        solution: cfop.solution,
+        totalSteps: cfop.totalSteps,
+        stages: cfopStageSteps,
+        verified: cfopVerified,
+        stageValidation: cfopStageValidation,
+      },
+      userStageReplay: userStageInfo,
+      stageComparison,
+      prioritizedRecommendations: coachRecommendations,
+      coachPlan: {
+        recommendations: coachRecommendations,
+        weeklyPlan,
+        learningResources: coachRecommendations
+          .slice(0, 3)
+          .flatMap((r) => r.resourceLinks)
+          .filter((v, i, arr) => arr.findIndex((x) => x.url === v.url) === i),
+        nextSolveChecklist: [
+          '先确认 Cross 目标边位，避免盲转',
+          'F2L 每槽先看是否能低成本转标态，再入槽',
+          'OLL/PLL 先识别再执行，禁止边做边猜',
+          '每把结束记录四阶段步数，持续跟踪瓶颈',
+        ],
+      },
+      policy: {
+        compareAfterFullCFOP: true,
+        note: 'Stage comparison is generated only after reference CFOP full verification succeeds.',
+      },
+    })
   } catch (e) {
     const duration = Date.now() - startTime
     logger.error('Analysis error', {

@@ -252,7 +252,7 @@ export function validateFormula(formula: string): { valid: boolean; error?: stri
   }
 
   // 检查是否有非法字符
-  const validChars = /^[RLUDFBrludfbxyz\s'2()0-9]+$/
+  const validChars = /^[RLUDFBrludfbMESmesxyz\s'2()0-9]+$/
   if (!validChars.test(formula)) {
     return { valid: false, error: '包含非法字符' }
   }

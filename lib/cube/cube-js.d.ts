@@ -1,9 +1,11 @@
-declare module 'cube-js' {
-  export class Cube {
-    constructor()
-    move(move: string): void
+declare module 'cubejs' {
+  class Cube {
+    constructor(cube?: Cube)
+    move(move: string): Cube
     asString(): string
-    fromString(state: string): Cube
+    toJSON(): { ep: number[]; eo: number[]; [key: string]: any }
+    static fromString(state: string): Cube
     isSolved(): boolean
   }
+  export default Cube
 }

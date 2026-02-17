@@ -1,18 +1,19 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { applyScramble, flattenCubeState } from '@/lib/cube/cube-state'
+﻿import { NextRequest, NextResponse } from 'next/server'
+import { applyScramble, createSolvedCube, unflattenCubeState } from '@/lib/cube/cube-state'
 import { findMatchingFormula } from '@/lib/cube/formulas'
 import { parseFormula } from '@/lib/cube/parser'
+import { solveCFOPDetailedVerified } from '@/lib/cube/cfop-latest'
 import { logger, generateRequestId } from '@/lib/utils/logger'
 
-// 简单的速率限制存储
+// 绠€鍗曠殑閫熺巼闄愬埗瀛樺偍
 const ipLimitMap = new Map<string, { count: number; resetTime: number }>()
 
 const RATE_LIMIT = {
-  maxRequests: 20,        // 每分钟最多请求数
-  windowMs: 60 * 1000,    // 1分钟窗口
+  maxRequests: 20,        // 姣忓垎閽熸渶澶氳姹傛暟
+  windowMs: 60 * 1000,    // 1鍒嗛挓绐楀彛
 }
 
-// API 密钥配置
+// API 瀵嗛挜閰嶇疆
 const API_KEYS = (process.env.API_KEYS || '').split(',').filter(k => k.length > 0)
 const SKIP_AUTH_FOR_DEMO = process.env.NODE_ENV !== 'production'
 
@@ -44,10 +45,10 @@ function checkAuth(headers: Headers): { valid: boolean; error?: string } {
   if (API_KEYS.length > 0) {
     const apiKey = headers.get('x-api-key') || headers.get('authorization')?.replace('Bearer ', '')
     if (!apiKey) {
-      return { valid: false, error: '缺少 API 密钥' }
+      return { valid: false, error: '缂哄皯 API 瀵嗛挜' }
     }
     if (!API_KEYS.includes(apiKey)) {
-      return { valid: false, error: '无效的 API 密钥' }
+      return { valid: false, error: '鏃犳晥鐨?API 瀵嗛挜' }
     }
   }
 
@@ -57,20 +58,20 @@ function checkAuth(headers: Headers): { valid: boolean; error?: string } {
 /**
  * GET /api/cube/optimal
  *
- * 根据打乱公式获取最优解和魔方状态
+ * 鏍规嵁鎵撲贡鍏紡鑾峰彇鏈€浼樿В鍜岄瓟鏂圭姸鎬?
  */
 export async function GET(req: NextRequest) {
   const requestId = generateRequestId()
   const startTime = Date.now()
 
-  // 认证和速率限制检查
+  // 璁よ瘉鍜岄€熺巼闄愬埗妫€鏌?
   const headers = req.headers
   const ip = headers.get('x-forwarded-for') || headers.get('x-real-ip') || 'unknown'
 
   if (!checkRateLimit(ip)) {
     logger.warn('Rate limit exceeded', { requestId, ip, endpoint: 'optimal' })
     return NextResponse.json(
-      { error: '请求过于频繁，请稍后再试' },
+      { error: '璇锋眰杩囦簬棰戠箒锛岃绋嶅悗鍐嶈瘯' },
       { status: 429 }
     )
   }
@@ -79,14 +80,14 @@ export async function GET(req: NextRequest) {
   if (!authResult.valid) {
     logger.warn('Authentication failed', { requestId, ip, endpoint: 'optimal', error: authResult.error })
     return NextResponse.json(
-      { error: authResult.error || '认证失败' },
+      { error: authResult.error || '璁よ瘉澶辫触' },
       { status: 401 }
     )
   }
 
   const result = await handleOptimalRequest(headers, req.url, requestId, startTime)
 
-  // 记录API调用
+  // 璁板綍API璋冪敤
   if (result.status === 200) {
     logger.api('GET', '/api/cube/optimal', 200, Date.now() - startTime, { requestId })
   }
@@ -97,21 +98,21 @@ export async function GET(req: NextRequest) {
 /**
  * POST /api/cube/optimal
  *
- * 同 GET，但使用 POST 方法
+ * 鍚?GET锛屼絾浣跨敤 POST 鏂规硶
  */
 export async function POST(req: NextRequest) {
   const requestId = generateRequestId()
   const startTime = Date.now()
 
   try {
-    // 认证和速率限制检查
+    // 璁よ瘉鍜岄€熺巼闄愬埗妫€鏌?
     const headers = req.headers
     const ip = headers.get('x-forwarded-for') || headers.get('x-real-ip') || 'unknown'
 
     if (!checkRateLimit(ip)) {
       logger.warn('Rate limit exceeded', { requestId, ip, endpoint: 'optimal' })
       return NextResponse.json(
-        { error: '请求过于频繁，请稍后再试' },
+        { error: '璇锋眰杩囦簬棰戠箒锛岃绋嶅悗鍐嶈瘯' },
         { status: 429 }
       )
     }
@@ -120,7 +121,7 @@ export async function POST(req: NextRequest) {
     if (!authResult.valid) {
       logger.warn('Authentication failed', { requestId, ip, endpoint: 'optimal', error: authResult.error })
       return NextResponse.json(
-        { error: authResult.error || '认证失败' },
+        { error: authResult.error || '璁よ瘉澶辫触' },
         { status: 401 }
       )
     }
@@ -128,7 +129,7 @@ export async function POST(req: NextRequest) {
     const { scramble } = await req.json()
     const result = await handleOptimalRequest(headers, null, requestId, startTime, scramble)
 
-    // 记录API调用
+    // 璁板綍API璋冪敤
     if (result.status === 200) {
       logger.api('POST', '/api/cube/optimal', 200, Date.now() - startTime, { requestId })
     }
@@ -141,7 +142,7 @@ export async function POST(req: NextRequest) {
       error: e instanceof Error ? { message: e.message, stack: e.stack } : String(e)
     })
     return NextResponse.json(
-      { error: '无效的请求格式' },
+      { error: 'Invalid request body' },
       { status: 400 }
     )
   }
@@ -166,34 +167,34 @@ async function handleOptimalRequest(
 
     if (!scramble) {
       return NextResponse.json(
-        { error: '缺少 scramble 参数' },
+        { error: '缂哄皯 scramble 鍙傛暟' },
         { status: 400 }
       )
     }
 
     const trimmedScramble = scramble.trim()
 
-    // 验证输入（允许大写、小写字母和修饰符）
+    // 楠岃瘉杈撳叆锛堝厑璁稿ぇ鍐欍€佸皬鍐欏瓧姣嶅拰淇グ绗︼級
     const validChars = /^[RLUDFBrludfb\s'2]+$/
     if (!validChars.test(trimmedScramble)) {
       return NextResponse.json(
-        { error: '打乱公式包含非法字符，请只使用 R L U D F B（大写单层，小写两层）及修饰符 \' 和 2' },
+        { error: '鎵撲贡鍏紡鍖呭惈闈炴硶瀛楃锛岃鍙娇鐢?R L U D F B锛堝ぇ鍐欏崟灞傦紝灏忓啓涓ゅ眰锛夊強淇グ绗?\' 鍜?2' },
         { status: 400 }
       )
     }
 
-    // 获取魔方状态
-    const cubeState = applyScramble(trimmedScramble)
+    // 鑾峰彇榄旀柟鐘舵€?
+    const cubeState = applyScramble(createSolvedCube(), trimmedScramble)
 
-    // 将打乱公式转换为 cube-solver 需要的格式（移除空格）
+    // 灏嗘墦涔卞叕寮忚浆鎹负 cube-solver 闇€瑕佺殑鏍煎紡锛堢Щ闄ょ┖鏍硷級
     const solverScramble = trimmedScramble.replace(/\s+/g, ' ').trim()
 
-    // 生成最优解 (使用 cube-solver 库)
+    // 鐢熸垚鏈€浼樿В (浣跨敤 cube-solver 搴?
     let optimalSolution = ''
     let steps = 0
 
     try {
-      // 动态导入 cube-solver
+      // 鍔ㄦ€佸鍏?cube-solver
       const solver = require('cube-solver')
       const solution = solver.solve(solverScramble)
 
@@ -203,12 +204,15 @@ async function handleOptimalRequest(
       }
     } catch (solverError) {
       console.error('cube-solver error:', solverError)
-      // 如果求解失败，使用逆序作为备选方案
-      optimalSolution = generateInverseSolution(trimmedScramble)
-      steps = optimalSolution.trim().split(/\s+/).length
     }
 
-    // 解析最优解并识别公式
+    if (!optimalSolution) {
+      const cfop = solveCFOPDetailedVerified(trimmedScramble)
+      optimalSolution = cfop.solution
+      steps = cfop.totalSteps
+    }
+
+    // 瑙ｆ瀽鏈€浼樿В骞惰瘑鍒叕寮?
     let recognizedFormulas: any[] = []
     if (optimalSolution) {
       try {
@@ -219,54 +223,28 @@ async function handleOptimalRequest(
       }
     }
 
-    // 生成公式解说
+    // 鐢熸垚鍏紡瑙ｈ
     const explanations = generateFormulaExplanations(optimalSolution, steps, recognizedFormulas)
 
     return NextResponse.json({
       scramble: trimmedScramble,
       optimalSolution,
       steps,
-      cubeState: flattenCubeState(cubeState),
+      cubeState: unflattenCubeState(cubeState),
       formulas: recognizedFormulas,
       explanations,
     })
   } catch (e: any) {
     console.error('Optimal solution error:', e)
     return NextResponse.json(
-      { error: '生成最优解失败: ' + (e?.message || '未知错误') },
+      { error: '鐢熸垚鏈€浼樿В澶辫触: ' + (e?.message || '鏈煡閿欒') },
       { status: 500 }
     )
   }
 }
 
 /**
- * 生成逆序解法（备选方案）
- */
-function generateInverseSolution(scramble: string): string {
-  const moves = scramble.trim().split(/\s+/).filter(Boolean)
-  const inverse: string[] = []
-
-  // 逆序并反转每个动作
-  for (let i = moves.length - 1; i >= 0; i--) {
-    const move = moves[i]
-    let inverted = ''
-
-    if (move.endsWith("2")) {
-      inverted = move.replace("2", "") + "2"
-    } else if (move.endsWith("'")) {
-      inverted = move.slice(0, -1)
-    } else {
-      inverted = move + "'"
-    }
-
-    inverse.push(inverted)
-  }
-
-  return inverse.join(' ')
-}
-
-/**
- * 识别解法中的公式
+ * 璇嗗埆瑙ｆ硶涓殑鍏紡
  */
 function recognizeSolutionFormulas(moves: any): any[] {
   const recognized: any[] = []
@@ -277,7 +255,7 @@ function recognizeSolutionFormulas(moves: any): any[] {
 
   const moveList = moves.moves || []
 
-  // 提取子序列进行匹配 (3-10步)
+  // 鎻愬彇瀛愬簭鍒楄繘琛屽尮閰?(3-10姝?
   for (let len = Math.min(10, moveList.length); len >= 3; len--) {
     for (let i = 0; i <= moveList.length - len; i++) {
       try {
@@ -298,7 +276,7 @@ function recognizeSolutionFormulas(moves: any): any[] {
           }
         }
       } catch {
-        // 跳过无法匹配的子序列
+        // 璺宠繃鏃犳硶鍖归厤鐨勫瓙搴忓垪
       }
     }
   }
@@ -307,30 +285,31 @@ function recognizeSolutionFormulas(moves: any): any[] {
 }
 
 /**
- * 生成公式解说
+ * 鐢熸垚鍏紡瑙ｈ
  */
 function generateFormulaExplanations(solution: string, steps: number, formulas: any[]): string[] {
   const explanations: string[] = []
 
-  // 基础信息
-  explanations.push(`最优解共 ${steps} 步`)
+  // 鍩虹淇℃伅
+  explanations.push('Solution length: ' + steps + ' moves')
 
-  // 按阶段解说
+  // 鎸夐樁娈佃В璇?
   if (steps <= 10) {
-    explanations.push('这是一个较短的解法，适合初学者练习')
+    explanations.push('Excellent solution length.')
   } else if (steps <= 15) {
-    explanations.push('解法长度适中，包含了多个技巧性动作')
+    explanations.push('Good solution length.')
   } else if (steps <= 20) {
-    explanations.push('解法较长，建议分阶段记忆和练习')
+    explanations.push('Very efficient solve for this scramble.')
   } else {
-    explanations.push('这是完整打乱的还原解法，建议使用CFOP方法分阶段练习')
+    explanations.push('Long solution; consider CFOP recognition to shorten it.')
   }
 
-  // 公式识别
+  // 鍏紡璇嗗埆
   if (formulas.length > 0) {
     const categories = [...new Set(formulas.map((f: any) => f.category))]
-    explanations.push(`包含的公式类型: ${categories.join(', ')}`)
+    explanations.push('Recognized categories: ' + categories.join(', '))
   }
 
   return explanations
 }
+
