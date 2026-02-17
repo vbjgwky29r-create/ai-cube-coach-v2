@@ -155,7 +155,7 @@ export default function AnalyzePage() {
     }, 2000)
 
     const controller = new AbortController()
-    const timeoutId = window.setTimeout(() => controller.abort('optimal_timeout'), 180000)
+    const timeoutId = window.setTimeout(() => controller.abort('optimal_timeout'), 600000)
 
     try {
       const { ok, data } = await requestOptimal(normalized, controller.signal)

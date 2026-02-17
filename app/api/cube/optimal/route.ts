@@ -1,4 +1,4 @@
-﻿import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { applyScramble, createSolvedCube, unflattenCubeState } from '@/lib/cube/cube-state'
 import { findMatchingFormula } from '@/lib/cube/formulas'
 import { parseFormula } from '@/lib/cube/parser'
@@ -222,10 +222,7 @@ async function handleOptimalRequest(
     const cubeState = applyScramble(createSolvedCube(), normalizedScramble)
 
     // 鐢熸垚 CFOP 鍙傝€冭В锛堜笉浣跨敤閫嗘墦涔卞瀷鏈€鐭В锛?
-    let cfop = solveCFOPDetailedVerified(normalizedScramble)
-    for (let i = 0; i < 2 && (!cfop.verified || !cfop.solution); i++) {
-      cfop = solveCFOPDetailedVerified(normalizedScramble)
-    }
+    const cfop = solveCFOPDetailedVerified(normalizedScramble)
     const optimalSolution = cfop.solution || ''
     const steps = cfop.totalSteps || 0
     const warning = !cfop.verified || !optimalSolution
