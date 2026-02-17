@@ -203,11 +203,14 @@ export default function AnalyzePage() {
     }
 
     setAnalyzing(true)
+    const controller = new AbortController()
+    const timeoutId = window.setTimeout(() => controller.abort('analyze_timeout'), 120000)
     try {
       const response = await fetch('/api/cube/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ scramble, solution }),
+        signal: controller.signal,
       })
       const data = await response.json()
       if (!response.ok) {
@@ -219,6 +222,7 @@ export default function AnalyzePage() {
       console.error(e)
       alert('分析失败，请重试。')
     } finally {
+      window.clearTimeout(timeoutId)
       setAnalyzing(false)
     }
   }
@@ -300,6 +304,10 @@ export default function AnalyzePage() {
   const cubeState: CubeState | null = cubeStateRaw
     ? (typeof cubeStateRaw === 'string' ? unflattenCubeState(cubeStateRaw) : cubeStateRaw)
     : null
+  const pllMovesRaw = optimalResult?.cfop?.pll?.moves
+  const pllMovesDisplay = typeof pllMovesRaw === 'string' && pllMovesRaw.trim().length > 0
+    ? pllMovesRaw
+    : 'PLL Skip'
 
   return (
     <div className="min-h-screen py-4 sm:py-6">
@@ -441,7 +449,7 @@ export default function AnalyzePage() {
                     <div><span className="text-slate-500">Cross：</span> {optimalResult.cfop?.cross?.moves || '-'}</div>
                     <div><span className="text-slate-500">F2L：</span> {optimalResult.cfop?.f2l?.moves || '-'}</div>
                     <div><span className="text-slate-500">OLL：</span> {optimalResult.cfop?.oll?.moves || '-'}</div>
-                    <div><span className="text-slate-500">PLL：</span> {optimalResult.cfop?.pll?.moves || '-'}</div>
+                    <div><span className="text-slate-500">PLL：</span> {pllMovesDisplay}</div>
                   </div>
                 )}
 
