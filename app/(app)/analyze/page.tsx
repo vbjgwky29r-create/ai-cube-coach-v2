@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState, type ChangeEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Textarea } from '@/components/ui/textarea'
@@ -19,9 +19,11 @@ export default function AnalyzePage() {
   const [generatingOptimal, setGeneratingOptimal] = useState(false)
   const [result, setResult] = useState<any>(null)
   const [optimalResult, setOptimalResult] = useState<any>(null)
+  const [ocrLoading, setOcrLoading] = useState(false)
   const [showKeyboard, setShowKeyboard] = useState(true)
   const [keyboardTarget, setKeyboardTarget] = useState<'scramble' | 'solution'>('solution')
   const [showCube, setShowCube] = useState(true)
+  const imageInputRef = useRef<HTMLInputElement | null>(null)
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [_optimalError, setOptimalError] = useState<string | null>(null)
 
@@ -87,6 +89,49 @@ export default function AnalyzePage() {
       alert('分析失败，请稍后重试')
     } finally {
       setAnalyzing(false)
+    }
+  }
+
+  const handlePickImage = () => {
+    imageInputRef.current?.click()
+  }
+
+  const handleImageUpload = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    try {
+      setOcrLoading(true)
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => {
+          const result = String(reader.result || '')
+          const payload = result.includes(',') ? result.split(',')[1] : result
+          resolve(payload)
+        }
+        reader.onerror = () => reject(new Error('failed_to_read_image'))
+        reader.readAsDataURL(file)
+      })
+
+      const response = await fetch('/api/ocr/cube-formula', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: base64, mode: 'simple' }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data?.error || 'ocr_request_failed')
+
+      if (data.scramble) setScramble(data.scramble)
+      if (data.solution) setSolution(data.solution)
+      if (!data.scramble && !data.solution) {
+        alert('OCR did not extract scramble/solution. Please try a clearer screenshot.')
+      }
+    } catch (err) {
+      console.error('[OCR Upload] Failed:', err)
+      alert('Image OCR failed. Please try again.')
+    } finally {
+      setOcrLoading(false)
+      e.target.value = ''
     }
   }
 
@@ -185,6 +230,13 @@ export default function AnalyzePage() {
                     </label>
                     <div className="flex items-center gap-2">
                       <button
+                        onClick={handlePickImage}
+                        className="text-[10px] px-2 py-0.5 rounded transition-colors bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-1 disabled:opacity-50"
+                        disabled={ocrLoading}
+                      >
+                        {ocrLoading ? 'OCR...' : 'Upload Image'}
+                      </button>
+                      <button
                         onClick={() => setKeyboardTarget('scramble')}
                         className={cn(
                           "text-[10px] px-2 py-0.5 rounded transition-colors",
@@ -214,6 +266,13 @@ export default function AnalyzePage() {
                         </>
                       )}
                     </div>
+                    <input
+                      ref={imageInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleImageUpload}
+                    />
                   </div>
                   <div className="relative">
                     <Input
