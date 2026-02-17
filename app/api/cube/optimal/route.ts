@@ -222,27 +222,15 @@ async function handleOptimalRequest(
     const cubeState = applyScramble(createSolvedCube(), normalizedScramble)
 
     // 鐢熸垚 CFOP 鍙傝€冭В锛堜笉浣跨敤閫嗘墦涔卞瀷鏈€鐭В锛?
-    const cfop = solveCFOPDetailedVerified(normalizedScramble)
-    const optimalSolution = cfop.solution
-    const steps = cfop.totalSteps
-
-    if (!cfop.verified || !optimalSolution) {
-      return NextResponse.json(
-        {
-          error: 'Solver failed to produce a verified CFOP solution for this scramble. Please check OCR result and retry.',
-          scramble: normalizedScramble,
-          strategy: 'CFOP',
-          cfop: {
-            verified: false,
-            cross: cfop.cross,
-            f2l: cfop.f2l,
-            oll: cfop.oll,
-            pll: cfop.pll,
-          },
-        },
-        { status: 422 }
-      )
+    let cfop = solveCFOPDetailedVerified(normalizedScramble)
+    for (let i = 0; i < 2 && (!cfop.verified || !cfop.solution); i++) {
+      cfop = solveCFOPDetailedVerified(normalizedScramble)
     }
+    const optimalSolution = cfop.solution || ''
+    const steps = cfop.totalSteps || 0
+    const warning = !cfop.verified || !optimalSolution
+      ? 'Solver failed to produce a verified CFOP solution for this scramble. Returning best-effort staged result.'
+      : undefined
 
     // 瑙ｆ瀽鏈€浼樿В骞惰瘑鍒叕寮?
     let recognizedFormulas: any[] = []
@@ -266,6 +254,7 @@ async function handleOptimalRequest(
       formulas: recognizedFormulas,
       explanations,
       strategy: 'CFOP',
+      warning,
       cfop: {
         cross: cfop.cross,
         f2l: cfop.f2l,
