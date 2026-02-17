@@ -34,6 +34,8 @@
     "node_modules",
     "**/archive/**",
     "scripts/**",
+    "lib/cube/cfop-solver.ts",
+    "lib/cube/xcross-solver.ts",
     "lib/cube/f2l-tiered-solver.ts",
     "lib/ube/f2l-tiered-solver.ts"
   ]
