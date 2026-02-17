@@ -138,7 +138,7 @@ export default function AnalyzePage() {
   const handleStageSolve = async (stage: Stage) => {
     const normalized = normalizeScrambleInput(scramble.trim())
     if (!normalized) {
-      setStageError('请先输入打乱公式。')
+      setStageError('Please input scramble first.')
       return
     }
     setSelectedStage(stage)
@@ -148,19 +148,41 @@ export default function AnalyzePage() {
       const data = await ensureStageResult(normalized)
       const moves = data?.solution?.[stage]?.moves
       if (!moves || !String(moves).trim()) {
-        setStageError(stage === 'pll' ? 'PLL Skip' : `${stage.toUpperCase()} 暂无公式`)
+        setStageError(stage === 'pll' ? 'PLL Skip' : `${stage.toUpperCase()} has no moves`)
       }
     } catch (e: any) {
-      setStageError(String(e?.message || '阶段求解失败'))
+      setStageError(String(e?.message || 'Stage solve failed'))
     } finally {
       setStageLoading(null)
+    }
+  }
+
+  const generateNetOnly = () => {
+    const trimmed = scramble.trim()
+    if (!trimmed || trimmed.length < 3) {
+      setOptimalError('Please input scramble first.')
+      return
+    }
+    const normalized = normalizeScrambleInput(trimmed)
+    try {
+      const state = unflattenCubeState(applyScramble(createSolvedCube(), normalized))
+      setOptimalError(null)
+      setOptimalResult({
+        scramble: normalized,
+        cubeState: state,
+        optimalSolution: '',
+        steps: 0,
+        explanations: ['Cube net generated.'],
+      })
+    } catch {
+      setOptimalError('Invalid scramble, cannot generate cube net.')
     }
   }
 
   const generateOptimal = async () => {
     const trimmed = scramble.trim()
     if (!trimmed || trimmed.length < 3) {
-      setOptimalError('请先输入打乱公式。')
+      setOptimalError('Please input scramble first.')
       return
     }
 
@@ -183,7 +205,7 @@ export default function AnalyzePage() {
       cubeState: seedCubeState,
       optimalSolution: prev?.optimalSolution || '',
       steps: prev?.steps || 0,
-      explanations: prev?.explanations || ['分阶段求解中：Cross -> F2L -> OLL -> PLL'],
+      explanations: prev?.explanations || ['Solving by stages: Cross -> F2L -> OLL -> PLL'],
     }))
 
     const progressTimer = window.setInterval(() => {
@@ -210,13 +232,13 @@ export default function AnalyzePage() {
     try {
       const { ok, data } = await requestOptimal(normalized, controller.signal)
       if (!ok) {
-        setOptimalError(data?.error || '生成最优解失败')
+        setOptimalError(data?.error || 'Generate optimal failed')
         if (data) {
           setOptimalResult((prev) => ({
             ...(prev || {}),
             ...data,
             cubeState: data.cubeState || prev?.cubeState || seedCubeState,
-            explanations: data.explanations || [data.error || '当前还没有通过验证的完整解。'],
+            explanations: data.explanations || [data.error || 'No verified complete solution yet.'],
           }))
         }
         return
@@ -228,12 +250,12 @@ export default function AnalyzePage() {
     } catch (e: any) {
       const msg = String(e?.message || '')
       const isAbort = controller.signal.aborted || e?.name === 'AbortError' || /aborted|abort/i.test(msg)
-      setOptimalError(isAbort ? '生成超时，请点击“刷新最优解”重试。' : (msg || '生成最优解失败'))
+      setOptimalError(isAbort ? 'Generation timed out. Please retry.' : (msg || 'Generate optimal failed'))
       setOptimalResult((prev) => ({
         ...(prev || {}),
         scramble: normalized,
         cubeState: prev?.cubeState || seedCubeState,
-        explanations: prev?.explanations || ['最优解生成失败，请重试。'],
+        explanations: prev?.explanations || ['Generate optimal failed. Please retry.'],
       }))
     } finally {
       window.clearInterval(progressTimer)
@@ -247,7 +269,7 @@ export default function AnalyzePage() {
 
   const handleAnalyze = async () => {
     if (!solution.trim()) {
-      alert('请先输入你的还原公式。')
+      alert('Please input your solution first.')
       return
     }
     setAnalyzing(true)
@@ -262,13 +284,13 @@ export default function AnalyzePage() {
       })
       const data = await response.json().catch(() => null)
       if (!response.ok) {
-        alert(data?.error || '分析请求失败，请重试。')
+        alert(data?.error || 'Analyze request failed')
         return
       }
       setResult(data)
     } catch (e: any) {
       const isAbort = controller.signal.aborted || e?.name === 'AbortError'
-      alert(isAbort ? '分析超时，请重试。' : '分析失败，请重试。')
+      alert(isAbort ? 'Analyze timeout, please retry.' : 'Analyze failed, please retry.')
     } finally {
       window.clearTimeout(timeoutId)
       setAnalyzing(false)
@@ -291,16 +313,16 @@ export default function AnalyzePage() {
       })
       const data = await response.json().catch(() => ({}))
       if (!response.ok) {
-        throw new Error(typeof data?.error === 'string' ? data.error : 'OCR 请求失败')
+        throw new Error(typeof data?.error === 'string' ? data.error : 'OCR request failed')
       }
       if (data.scramble) setScramble(data.scramble)
       if (data.solution) setSolution(data.solution)
       if (!data.scramble && !data.solution) {
-        alert('OCR 未识别出打乱/还原公式，请换更清晰截图。')
+        alert('OCR did not extract scramble/solution. Please try clearer image.')
       }
     } catch (err: any) {
-      const msg = String(err?.message || 'OCR 失败')
-      alert(`OCR 失败：${msg}`)
+      const msg = String(err?.message || 'OCR failed')
+      alert(`OCR failed: ${msg}`)
     } finally {
       setOcrLoading(false)
       e.target.value = ''
@@ -355,29 +377,29 @@ export default function AnalyzePage() {
             <CardHeader className="border-b border-slate-100">
               <CardTitle className="flex items-center gap-2 text-slate-900">
                 <Sparkles className="w-5 h-5 text-slate-600" />
-                魔方复盘分析
+                Cube Analyze
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-4 space-y-4">
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <label className="text-xs font-semibold text-slate-700">打乱公式</label>
+                  <label className="text-xs font-semibold text-slate-700">Scramble</label>
                   <div className="flex items-center gap-2">
                     <button onClick={handlePickImage} className="text-[10px] px-2 py-0.5 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50" disabled={ocrLoading}>
-                      {ocrLoading ? '识别中...' : '上传图片'}
+                      {ocrLoading ? 'OCR...' : 'Upload'}
                     </button>
                     <button onClick={() => setKeyboardTarget('scramble')} className={cn('text-[10px] px-2 py-0.5 rounded', keyboardTarget === 'scramble' ? 'bg-orange-500 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200')}>
-                      虚拟键盘
+                      Keyboard
                     </button>
                     {cubeState && (
                       <button onClick={() => setShowCube(!showCube)} className="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-500 hover:bg-slate-200 flex items-center gap-1">
                         {showCube ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                        {showCube ? '隐藏展开图' : '显示展开图'}
+                        {showCube ? 'Hide Net' : 'Show Net'}
                       </button>
                     )}
                   </div>
                 </div>
-                <Input value={scramble} readOnly onClick={() => setKeyboardTarget('scramble')} placeholder="请输入打乱公式" className="font-cube text-sm cursor-pointer" />
+                <Input value={scramble} readOnly onClick={() => setKeyboardTarget('scramble')} placeholder="Please input scramble" className="font-cube text-sm cursor-pointer" />
                 {generatingOptimal && (
                   <div className="mt-2">
                     <Progress value={optimalProgress} className="h-2" />
@@ -400,13 +422,13 @@ export default function AnalyzePage() {
                   <button onClick={() => handleStageSolve('pll')} className="text-[10px] px-2 py-1 rounded bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:opacity-50" disabled={!!stageLoading || !scramble.trim()}>
                     {stageLoading === 'pll' ? 'PLL...' : 'PLL'}
                   </button>
-                  <button onClick={generateOptimal} className="text-[10px] px-2 py-1 rounded bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-50" disabled={generatingOptimal || !scramble.trim()}>
-                    展开图
+                  <button onClick={generateNetOnly} className="text-[10px] px-2 py-1 rounded bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-50" disabled={!scramble.trim()}>
+                    Net
                   </button>
                 </div>
                 {selectedStage && (
                   <div className="mt-2 text-[10px] bg-slate-50 border border-slate-200 rounded p-2">
-                    <div className="text-slate-500 mb-1">{selectedStage.toUpperCase()}：</div>
+                    <div className="text-slate-500 mb-1">{selectedStage.toUpperCase()}:</div>
                     <code className="font-cube text-slate-800 break-all">{stageMoves || (selectedStage === 'pll' ? 'PLL Skip' : 'No moves')}</code>
                   </div>
                 )}
@@ -415,19 +437,19 @@ export default function AnalyzePage() {
 
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <label className="text-xs font-semibold text-slate-700">你的还原公式</label>
+                  <label className="text-xs font-semibold text-slate-700">Your Solution</label>
                   <button onClick={() => setKeyboardTarget('solution')} className={cn('text-[10px] px-2 py-0.5 rounded', keyboardTarget === 'solution' ? 'bg-orange-500 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200')}>
-                    虚拟键盘
+                    Keyboard
                   </button>
                 </div>
-                <Textarea value={solution} readOnly onClick={() => setKeyboardTarget('solution')} placeholder="请输入你的还原公式" rows={3} className="font-cube text-sm resize-none cursor-pointer" />
+                <Textarea value={solution} readOnly onClick={() => setKeyboardTarget('solution')} placeholder="Please input your solution" rows={3} className="font-cube text-sm resize-none cursor-pointer" />
               </div>
 
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs text-slate-500">当前输入目标：<span className="font-semibold text-orange-500">{keyboardTarget === 'scramble' ? '打乱公式' : '还原公式'}</span></span>
+                  <span className="text-xs text-slate-500">Current target: <span className="font-semibold text-orange-500">{keyboardTarget === 'scramble' ? 'Scramble' : 'Solution'}</span></span>
                   <Button variant="ghost" size="sm" onClick={() => setShowKeyboard(!showKeyboard)} className="lg:hidden text-slate-500 px-2 h-7">
-                    {showKeyboard ? '隐藏' : '显示'}
+                    {showKeyboard ? 'Hide' : 'Show'}
                   </Button>
                 </div>
                 {showKeyboard && (
@@ -442,7 +464,7 @@ export default function AnalyzePage() {
               </div>
 
               <Button onClick={handleAnalyze} disabled={analyzing || !solution.trim()} className={cn('w-full py-5 text-base font-semibold bg-slate-900 text-white hover:bg-slate-800', analyzing && 'animate-pulse')}>
-                {analyzing ? '分析中...' : '开始分析'}
+                {analyzing ? 'Analyzing...' : 'Analyze'}
               </Button>
             </CardContent>
           </Card>
@@ -452,7 +474,7 @@ export default function AnalyzePage() {
               <CardHeader className="border-b border-slate-100">
                 <CardTitle className="flex items-center gap-2 text-sm">
                   <Trophy className="w-4 h-4 text-yellow-500" />
-                  分析结果
+                  Analyze Result
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-3">
@@ -468,7 +490,7 @@ export default function AnalyzePage() {
               <CardHeader className="border-b border-slate-100 pb-3">
                 <CardTitle className="flex items-center gap-2 text-sm">
                   <Box className="w-4 h-4 text-purple-500" />
-                  魔方展开图
+                  Cube Net
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-3">
@@ -480,24 +502,24 @@ export default function AnalyzePage() {
             </Card>
           )}
 
-          {(optimalResult || generatingOptimal) && (
+          {(generatingOptimal || !!optimalResult?.optimalSolution) && (
             <Card className="border border-slate-200 shadow-sm">
               <CardHeader className="border-b border-slate-100 pb-3">
                 <CardTitle className="flex items-center gap-2 text-sm">
                   <Target className="w-4 h-4 text-green-500" />
-                  最优解（CFOP）
+                  Optimal (CFOP)
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-3 space-y-3">
                 <div className="text-center p-2 rounded-lg bg-green-50 border border-green-200">
-                  <p className="text-[10px] text-slate-500">步数</p>
+                  <p className="text-[10px] text-slate-500">Steps</p>
                   <p className="text-2xl font-bold text-green-600">{optimalResult?.steps || '-'}</p>
                 </div>
 
                 <div>
-                  <p className="text-[10px] text-slate-500 mb-1">解法公式：</p>
+                  <p className="text-[10px] text-slate-500 mb-1">Formula:</p>
                   <code className="block bg-slate-100 p-2 rounded text-xs break-all font-cube border border-slate-200 text-slate-800">
-                    {optimalResult?.optimalSolution || `求解中...（${optimalStage || 'CFOP'}）`}
+                    {optimalResult?.optimalSolution || (generatingOptimal ? `Solving... (${optimalStage || 'CFOP'})` : 'No optimal solution generated yet.')}
                   </code>
                 </div>
 
@@ -505,15 +527,15 @@ export default function AnalyzePage() {
 
                 {optimalResult?.cfop && (
                   <div className="text-[10px] text-slate-600 space-y-1">
-                    <div><span className="text-slate-500">Cross：</span> {optimalResult.cfop?.cross?.moves || '-'}</div>
-                    <div><span className="text-slate-500">F2L：</span> {optimalResult.cfop?.f2l?.moves || '-'}</div>
-                    <div><span className="text-slate-500">OLL：</span> {optimalResult.cfop?.oll?.moves || '-'}</div>
-                    <div><span className="text-slate-500">PLL：</span> {pllMovesDisplay}</div>
+                    <div><span className="text-slate-500">Cross:</span> {optimalResult.cfop?.cross?.moves || '-'}</div>
+                    <div><span className="text-slate-500">F2L:</span> {optimalResult.cfop?.f2l?.moves || '-'}</div>
+                    <div><span className="text-slate-500">OLL:</span> {optimalResult.cfop?.oll?.moves || '-'}</div>
+                    <div><span className="text-slate-500">PLL:</span> {pllMovesDisplay}</div>
                   </div>
                 )}
 
                 <Button variant="outline" size="sm" onClick={generateOptimal} disabled={generatingOptimal} className="w-full text-xs">
-                  {generatingOptimal ? '生成中...' : '刷新最优解'}
+                  {generatingOptimal ? 'Generating...' : 'Refresh Optimal'}
                 </Button>
               </CardContent>
             </Card>
