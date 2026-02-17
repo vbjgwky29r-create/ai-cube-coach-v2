@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Textarea } from '@/components/ui/textarea'
 import { Input } from '@/components/ui/input'
+import { Progress } from '@/components/ui/progress'
 import { CubeKeyboard } from '@/components/cube/cube-keyboard'
 import { CubeNet, ColorLegend } from '@/components/cube/cube-net'
 import { CoachPlanCard } from '@/components/cube/coach-plan-card'
@@ -17,6 +18,8 @@ export default function AnalyzePage() {
   const [solution, setSolution] = useState('')
   const [analyzing, setAnalyzing] = useState(false)
   const [generatingOptimal, setGeneratingOptimal] = useState(false)
+  const [optimalProgress, setOptimalProgress] = useState(0)
+  const [optimalStage, setOptimalStage] = useState('')
   const [result, setResult] = useState<any>(null)
   const [optimalResult, setOptimalResult] = useState<any>(null)
   const [ocrLoading, setOcrLoading] = useState(false)
@@ -34,13 +37,30 @@ export default function AnalyzePage() {
     }
 
     setGeneratingOptimal(true)
+    setOptimalProgress(8)
+    setOptimalStage('Initializing')
     setOptimalError(null)
+    const progressTimer = window.setInterval(() => {
+      setOptimalProgress((p) => (p < 90 ? p + Math.max(2, Math.floor((100 - p) / 12)) : p))
+    }, 220)
+    const stageTimer = window.setInterval(() => {
+      setOptimalStage((prev) => {
+        if (prev === 'Initializing') return 'Cross'
+        if (prev === 'Cross') return 'F2L'
+        if (prev === 'F2L') return 'OLL'
+        if (prev === 'OLL') return 'PLL'
+        return prev
+      })
+    }, 1800)
+    const controller = new AbortController()
+    const timeoutId = window.setTimeout(() => controller.abort(), 90000)
 
     try {
       const response = await fetch('/api/cube/optimal', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ scramble: scramble.trim() }),
+        signal: controller.signal,
       })
 
       if (!response.ok) {
@@ -49,6 +69,8 @@ export default function AnalyzePage() {
       }
 
       const data = await response.json()
+      setOptimalProgress(100)
+      setOptimalStage('Done')
       setOptimalResult(data)
     } catch (e: any) {
       console.error('生成最优解失败:', e)
@@ -63,6 +85,11 @@ export default function AnalyzePage() {
         explanations: ['最优解生成失败，请稍后再试'],
       })
     } finally {
+      window.clearInterval(progressTimer)
+      window.clearInterval(stageTimer)
+      window.clearTimeout(timeoutId)
+      window.setTimeout(() => setOptimalProgress(0), 300)
+      window.setTimeout(() => setOptimalStage(''), 300)
       setGeneratingOptimal(false)
     }
   }
@@ -301,6 +328,15 @@ export default function AnalyzePage() {
                       </button>
                     )}
                   </div>
+                  {generatingOptimal && (
+                    <div className="mt-2">
+                      <Progress value={optimalProgress} className="h-2" />
+                      <div className="mt-1 flex items-center justify-between text-[10px] text-slate-500">
+                        <span>{optimalStage || 'Solving'}</span>
+                        <span>{optimalProgress}%</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* 解法 */}

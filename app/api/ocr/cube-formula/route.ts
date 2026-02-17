@@ -29,7 +29,7 @@ function postProcessFormula(text: string): string {
     const lower = letter.toLowerCase()
     // 宽转（r/l/u/d/f/b）保持小写，其他转大写
     if ('rludfb'.includes(lower)) {
-      return lower + (modifier || '')
+      return lower.toUpperCase() + (modifier || '')
     }
     return lower.toUpperCase() + (modifier || '')
   })

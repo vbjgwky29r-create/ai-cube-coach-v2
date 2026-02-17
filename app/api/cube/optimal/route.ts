@@ -17,6 +17,19 @@ const RATE_LIMIT = {
 const API_KEYS = (process.env.API_KEYS || '').split(',').filter(k => k.length > 0)
 const SKIP_AUTH_FOR_DEMO = process.env.NODE_ENV !== 'production'
 
+function normalizeScrambleForSolver(input: string): string {
+  const tokens = input.trim().split(/\s+/).filter(Boolean)
+  const normalizedTokens = tokens.map((token) => {
+    const m = token.match(/^([RLUDFBrludfb])(2|'|2'|'2)?$/)
+    if (!m) return ''
+    const face = m[1].toUpperCase()
+    const suffixRaw = m[2] || ''
+    const suffix = suffixRaw.includes('2') ? '2' : suffixRaw.includes("'") ? "'" : ''
+    return `${face}${suffix}`
+  })
+  return normalizedTokens.filter(Boolean).join(' ')
+}
+
 function checkRateLimit(ip: string): boolean {
   const now = Date.now()
   const record = ipLimitMap.get(ip)
@@ -173,10 +186,11 @@ async function handleOptimalRequest(
     }
 
     const trimmedScramble = scramble.trim()
+    const normalizedScramble = normalizeScrambleForSolver(trimmedScramble)
 
     // 楠岃瘉杈撳叆锛堝厑璁稿ぇ鍐欍€佸皬鍐欏瓧姣嶅拰淇グ绗︼級
-    const validChars = /^[RLUDFBrludfb\s'2]+$/
-    if (!validChars.test(trimmedScramble)) {
+    const validChars = /^[RLUDFB\s'2]+$/
+    if (!normalizedScramble || !validChars.test(normalizedScramble)) {
       return NextResponse.json(
         { error: '鎵撲贡鍏紡鍖呭惈闈炴硶瀛楃锛岃鍙娇鐢?R L U D F B锛堝ぇ鍐欏崟灞傦紝灏忓啓涓ゅ眰锛夊強淇グ绗?\' 鍜?2' },
         { status: 400 }
@@ -184,12 +198,30 @@ async function handleOptimalRequest(
     }
 
     // 鑾峰彇榄旀柟鐘舵€?
-    const cubeState = applyScramble(createSolvedCube(), trimmedScramble)
+    const cubeState = applyScramble(createSolvedCube(), normalizedScramble)
 
     // 鐢熸垚 CFOP 鍙傝€冭В锛堜笉浣跨敤閫嗘墦涔卞瀷鏈€鐭В锛?
-    const cfop = solveCFOPDetailedVerified(trimmedScramble)
+    const cfop = solveCFOPDetailedVerified(normalizedScramble)
     const optimalSolution = cfop.solution
     const steps = cfop.totalSteps
+
+    if (!cfop.verified || !optimalSolution) {
+      return NextResponse.json(
+        {
+          error: 'Solver failed to produce a verified CFOP solution for this scramble. Please check OCR result and retry.',
+          scramble: normalizedScramble,
+          strategy: 'CFOP',
+          cfop: {
+            verified: false,
+            cross: cfop.cross,
+            f2l: cfop.f2l,
+            oll: cfop.oll,
+            pll: cfop.pll,
+          },
+        },
+        { status: 422 }
+      )
+    }
 
     // 瑙ｆ瀽鏈€浼樿В骞惰瘑鍒叕寮?
     let recognizedFormulas: any[] = []
@@ -206,7 +238,7 @@ async function handleOptimalRequest(
     const explanations = generateFormulaExplanations(optimalSolution, steps, recognizedFormulas)
 
     return NextResponse.json({
-      scramble: trimmedScramble,
+      scramble: normalizedScramble,
       optimalSolution,
       steps,
       cubeState: unflattenCubeState(cubeState),
