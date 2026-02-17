@@ -1,4 +1,4 @@
-'use client'
+﻿'use client'
 
 import { useRef, useState, type ChangeEvent } from 'react'
 import { Button } from '@/components/ui/button'
@@ -11,7 +11,7 @@ import { CubeNet, ColorLegend } from '@/components/cube/cube-net'
 import { CoachPlanCard } from '@/components/cube/coach-plan-card'
 import { Sparkles, Zap, Trophy, Target, Box, Eye, EyeOff, MapPin, Clock, TrendingUp, Fingerprint, AlertCircle } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { unflattenCubeState, type CubeState } from '@/lib/cube/cube-state'
+import { applyScramble, createSolvedCube, unflattenCubeState, type CubeState } from '@/lib/cube/cube-state'
 
 export default function AnalyzePage() {
   const [scramble, setScramble] = useState('R U R\' U\' R\' F R2 U\' R\' U\' R U R\' F\'')
@@ -30,19 +30,52 @@ export default function AnalyzePage() {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [_optimalError, setOptimalError] = useState<string | null>(null)
 
+  const normalizeScrambleInput = (input: string) =>
+    input
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((token) => {
+        const m = token.match(/^([RLUDFBrludfb])(2|'|2'|'2)?$/)
+        if (!m) return ''
+        const face = m[1].toUpperCase()
+        const suffixRaw = m[2] || ''
+        const suffix = suffixRaw.includes('2') ? '2' : suffixRaw.includes("'") ? "'" : ''
+        return `${face}${suffix}`
+      })
+      .filter(Boolean)
+      .join(' ')
+
   const generateOptimal = async () => {
     if (!scramble.trim() || scramble.trim().length < 3) {
-      setOptimalError('请输入至少3个字符的打乱公式')
+      setOptimalError('璇疯緭鍏ヨ嚦灏?涓瓧绗︾殑鎵撲贡鍏紡')
       return
     }
 
+    const normalizedScramble = normalizeScrambleInput(scramble)
+    const initialCubeState = normalizedScramble
+      ? unflattenCubeState(applyScramble(createSolvedCube(), normalizedScramble))
+      : null
+
     setGeneratingOptimal(true)
-    setOptimalProgress(8)
+    setOptimalProgress(5)
     setOptimalStage('Initializing')
     setOptimalError(null)
+    setOptimalResult((prev: any) => ({
+      ...(prev || {}),
+      scramble: normalizedScramble || scramble.trim(),
+      cubeState: initialCubeState,
+      optimalSolution: prev?.optimalSolution || '',
+      steps: prev?.steps || 0,
+      explanations: prev?.explanations || ['Solving CFOP by stages: Cross -> F2L -> OLL -> PLL'],
+    }))
     const progressTimer = window.setInterval(() => {
-      setOptimalProgress((p) => (p < 90 ? p + Math.max(2, Math.floor((100 - p) / 12)) : p))
-    }, 220)
+      setOptimalProgress((p) => {
+        if (p < 60) return p + 1
+        if (p < 85) return p + 0.5
+        return p
+      })
+    }, 1000)
     const stageTimer = window.setInterval(() => {
       setOptimalStage((prev) => {
         if (prev === 'Initializing') return 'Cross'
@@ -63,27 +96,34 @@ export default function AnalyzePage() {
         signal: controller.signal,
       })
 
+      const data = await response.json().catch(() => null)
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: '未知错误' }))
-        throw new Error(errorData.error || 'API 请求失败')
+        setOptimalError(data?.error || 'API request failed')
+        if (data) {
+          setOptimalResult((prev: any) => ({
+            ...(prev || {}),
+            ...data,
+            cubeState: data.cubeState || prev?.cubeState || initialCubeState,
+            explanations: data.explanations || [data.error || 'Solver did not return a verified full solution yet.'],
+          }))
+        }
+        return
       }
 
-      const data = await response.json()
       setOptimalProgress(100)
       setOptimalStage('Done')
       setOptimalResult(data)
     } catch (e: any) {
-      console.error('生成最优解失败:', e)
-      setOptimalError(e?.message || '生成失败')
-      // 失败时至少设置一个基本结果（不含最优解）
-      setOptimalResult({
-        scramble: scramble.trim(),
-        optimalSolution: '',
-        steps: 0,
-        cubeState: null,
-        formulas: [],
-        explanations: ['最优解生成失败，请稍后再试'],
-      })
+      console.error('Generate optimal failed:', e)
+      setOptimalError(e?.message || 'Failed to generate optimal solution')
+      setOptimalResult((prev: any) => ({
+        ...(prev || {}),
+        scramble: normalizedScramble || scramble.trim(),
+        cubeState: prev?.cubeState || initialCubeState,
+        optimalSolution: prev?.optimalSolution || '',
+        steps: prev?.steps || 0,
+        explanations: prev?.explanations || ['Optimal solve failed, please retry.'],
+      }))
     } finally {
       window.clearInterval(progressTimer)
       window.clearInterval(stageTimer)
@@ -96,7 +136,7 @@ export default function AnalyzePage() {
 
   const handleAnalyze = async () => {
     if (!solution.trim()) {
-      alert('请输入你的解法')
+      alert('Please enter your solution first.')
       return
     }
 
@@ -111,13 +151,13 @@ export default function AnalyzePage() {
 
       const data = await response.json()
       if (!response.ok) {
-        alert(data?.error || '鍒嗘瀽澶辫触锛岃绋嶅悗閲嶈瘯')
+        alert(data?.error || 'Analyze request failed. Please retry.')
         return
       }
       setResult(data)
     } catch (e) {
       console.error(e)
-      alert('分析失败，请稍后重试')
+      alert('Analyze failed. Please retry.')
     } finally {
       setAnalyzing(false)
     }
@@ -170,15 +210,15 @@ export default function AnalyzePage() {
     const setValue = keyboardTarget === 'scramble' ? setScramble : setSolution
     const currentValue = keyboardTarget === 'scramble' ? scramble : solution
 
-    // 检查是否是修饰符（' 或 2）
+    // 妫€鏌ユ槸鍚︽槸淇グ绗︼紙' 鎴?2锛?
     if (value === "'" || value === '2') {
-      // 修饰符：去掉末尾空格，加上修饰符，再加空格
+      // 淇グ绗︼細鍘绘帀鏈熬绌烘牸锛屽姞涓婁慨楗扮锛屽啀鍔犵┖鏍?
       setValue(currentValue.trimEnd() + value + ' ')
     } else if (value === ' ') {
-      // 空格直接添加
+      // 绌烘牸鐩存帴娣诲姞
       setValue(currentValue + value)
     } else {
-      // 普通字母：直接加字母后自动加空格
+      // 鏅€氬瓧姣嶏細鐩存帴鍔犲瓧姣嶅悗鑷姩鍔犵┖鏍?
       setValue(currentValue + value + ' ')
     }
   }
@@ -187,7 +227,7 @@ export default function AnalyzePage() {
     const setValue = keyboardTarget === 'scramble' ? setScramble : setSolution
     const currentValue = keyboardTarget === 'scramble' ? scramble : solution
 
-    // 如果末尾是空格，删除空格和前面的字母/修饰符
+    // 濡傛灉鏈熬鏄┖鏍硷紝鍒犻櫎绌烘牸鍜屽墠闈㈢殑瀛楁瘝/淇グ绗?
     const trimmed = currentValue.trimEnd()
     if (trimmed.length > 0) {
       setValue(trimmed.slice(0, -1) + ' ')
@@ -215,16 +255,16 @@ export default function AnalyzePage() {
   }
 
   const getEfficiencyLabel = (score: number) => {
-    if (score >= 9) return { label: '优秀', emoji: '🏆' }
-    if (score >= 7) return { label: '良好', emoji: '👍' }
-    if (score >= 5) return { label: '中等', emoji: '💪' }
-    if (score >= 3) return { label: '需改进', emoji: '📈' }
-    return { label: '加油', emoji: '🎯' }
+    if (score >= 9) return { label: '浼樼', emoji: '馃弳' }
+    if (score >= 7) return { label: '鑹ソ', emoji: '馃憤' }
+    if (score >= 5) return { label: '涓瓑', emoji: '馃挭' }
+    if (score >= 3) return { label: '闇€鏀硅繘', emoji: '馃搱' }
+    return { label: '鍔犳补', emoji: '馃幆' }
   }
 
   const getEfficiencyInfo = getEfficiencyLabel(0)
 
-  // 获取魔方状态用于可视化
+  // 鑾峰彇榄旀柟鐘舵€佺敤浜庡彲瑙嗗寲
   const cubeStateRaw = optimalResult?.cubeState
   const cubeState: CubeState | null = cubeStateRaw
     ? (typeof cubeStateRaw === 'string'
@@ -234,7 +274,7 @@ export default function AnalyzePage() {
 
   return (
     <div className="min-h-screen py-4 sm:py-6">
-      {/* 背景装饰 */}
+      {/* 鑳屾櫙瑁呴グ */}
       <div className="px-4 relative z-10">
         <div className="max-w-md sm:max-w-lg mx-auto lg:max-w-none lg:mx-0 lg:grid lg:grid-cols-[1fr_320px] lg:gap-6">
           {/* Header */}
@@ -242,25 +282,25 @@ export default function AnalyzePage() {
             <div className="inline-flex items-center gap-2 mb-3">
               <Sparkles className="w-6 h-6 sm:w-7 sm:h-7 text-slate-600" />
               <h1 className="text-xl sm:text-2xl md:text-3xl font-semibold text-slate-900">
-                解法分析
+                瑙ｆ硶鍒嗘瀽
               </h1>
             </div>
             <p className="text-slate-500 text-xs sm:text-sm max-w-md mx-auto">
-              输入打乱公式和你的解法，AI帮你找出优化空间
+              杈撳叆鎵撲贡鍏紡鍜屼綘鐨勮В娉曪紝AI甯綘鎵惧嚭浼樺寲绌洪棿
             </p>
           </div>
 
-          {/* 左侧：输入区域 */}
+          {/* 宸︿晶锛氳緭鍏ュ尯鍩?*/}
           <div className="w-full space-y-4">
-            {/* 输入区域 + 键盘合体 */}
+            {/* 杈撳叆鍖哄煙 + 閿洏鍚堜綋 */}
             <Card className="card-cube border border-slate-200 shadow-sm overflow-hidden">
-              {/* 输入框区域 */}
+              {/* 杈撳叆妗嗗尯鍩?*/}
               <div className="border-b border-slate-200 bg-slate-50/50 p-4 space-y-3">
-                {/* 打乱公式 */}
+                {/* 鎵撲贡鍏紡 */}
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
                     <label className="text-xs font-semibold text-slate-700">
-                      🎲 打乱公式
+                      馃幉 鎵撲贡鍏紡
                     </label>
                     <div className="flex items-center gap-2">
                       <button
@@ -279,14 +319,14 @@ export default function AnalyzePage() {
                             : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
                         )}
                       >
-                        当前输入
+                        褰撳墠杈撳叆
                       </button>
                       <button
                         onClick={generateOptimal}
                         className="text-[10px] px-2 py-0.5 rounded transition-colors bg-slate-900 text-white hover:bg-slate-800 flex items-center gap-1 disabled:opacity-50"
                         disabled={generatingOptimal || !scramble.trim()}
                       >
-                        {generatingOptimal ? '生成中...' : '生成展开图'}
+                        {generatingOptimal ? 'Generating...' : 'Generate Cube Net'}
                       </button>
                       {cubeState && (
                         <>
@@ -295,7 +335,7 @@ export default function AnalyzePage() {
                             className="text-[10px] px-2 py-0.5 rounded transition-colors bg-slate-100 text-slate-500 hover:bg-slate-200 flex items-center gap-1"
                           >
                             {showCube ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                            {showCube ? '隐藏' : '展开图'}
+                            {showCube ? 'Hide Cube Net' : 'Show Cube Net'}
                           </button>
                         </>
                       )}
@@ -313,7 +353,7 @@ export default function AnalyzePage() {
                       value={scramble}
                       readOnly
                       onClick={() => setKeyboardTarget('scramble')}
-                      placeholder="点击下方按钮输入..."
+                      placeholder="鐐瑰嚮涓嬫柟鎸夐挳杈撳叆..."
                       className="font-cube text-sm pr-16 h-10 cursor-pointer"
                     />
                     {scramble && (
@@ -324,7 +364,7 @@ export default function AnalyzePage() {
                         }}
                         className="absolute right-8 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs"
                       >
-                        ✕
+                        鉁?
                       </button>
                     )}
                   </div>
@@ -339,11 +379,11 @@ export default function AnalyzePage() {
                   )}
                 </div>
 
-                {/* 解法 */}
+                {/* 瑙ｆ硶 */}
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
                     <label className="text-xs font-semibold text-slate-700">
-                      ✨ 你的解法
+                      鉁?浣犵殑瑙ｆ硶
                     </label>
                     <button
                       onClick={() => setKeyboardTarget('solution')}
@@ -354,7 +394,7 @@ export default function AnalyzePage() {
                           : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
                       )}
                     >
-                      当前输入
+                      褰撳墠杈撳叆
                     </button>
                   </div>
                   <div className="relative">
@@ -362,7 +402,7 @@ export default function AnalyzePage() {
                       value={solution}
                       readOnly
                       onClick={() => setKeyboardTarget('solution')}
-                      placeholder="点击下方按钮输入..."
+                      placeholder="鐐瑰嚮涓嬫柟鎸夐挳杈撳叆..."
                       rows={3}
                       className="font-cube text-sm resize-none pr-8 cursor-pointer"
                     />
@@ -371,19 +411,19 @@ export default function AnalyzePage() {
                         onClick={() => setSolution('')}
                         className="absolute right-2 top-2 text-slate-400 hover:text-slate-600 text-xs"
                       >
-                        ✕
+                        鉁?
                       </button>
                     )}
                   </div>
                 </div>
               </div>
 
-              {/* 虚拟键盘 */}
+              {/* 铏氭嫙閿洏 */}
               <div className="p-3 bg-white">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs text-slate-500">
-                    点击下方按钮输入到 <span className="font-semibold text-orange-500">
-                      {keyboardTarget === 'scramble' ? '🎲 打乱公式' : '✨ 解法'}
+                    鐐瑰嚮涓嬫柟鎸夐挳杈撳叆鍒?<span className="font-semibold text-orange-500">
+                      {keyboardTarget === 'scramble' ? '馃幉 鎵撲贡鍏紡' : '鉁?瑙ｆ硶'}
                     </span>
                   </span>
                   <Button
@@ -392,7 +432,7 @@ export default function AnalyzePage() {
                     onClick={() => setShowKeyboard(!showKeyboard)}
                     className="lg:hidden text-slate-500 px-2 h-7"
                   >
-                    {showKeyboard ? '隐藏' : '键盘'}
+                    {showKeyboard ? '闅愯棌' : '閿洏'}
                   </Button>
                 </div>
 
@@ -408,7 +448,7 @@ export default function AnalyzePage() {
               </div>
             </Card>
 
-            {/* 分析按钮 */}
+            {/* 鍒嗘瀽鎸夐挳 */}
             <Button
               onClick={handleAnalyze}
               disabled={analyzing || !solution.trim()}
@@ -423,12 +463,12 @@ export default function AnalyzePage() {
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8 0 0 00018 0z" />
                   </svg>
-                  分析中...
+                  鍒嗘瀽涓?..
                 </span>
               ) : (
                 <span className="flex items-center justify-center gap-2">
                   <Trophy className="w-4 h-4" />
-                  开始分析
+                  寮€濮嬪垎鏋?
                 </span>
               )}
             </Button>
@@ -441,21 +481,21 @@ export default function AnalyzePage() {
                   <CardHeader className="border-b border-slate-100">
                     <CardTitle className="flex items-center gap-2">
                       <Trophy className="w-4 h-4 text-yellow-500" />
-                      分析结果
+                      鍒嗘瀽缁撴灉
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="pt-4">
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                       <div className="text-center p-3 rounded-lg bg-blue-50 border border-blue-200">
-                        <p className="text-[10px] text-slate-500 mb-0.5">你的步数</p>
+                        <p className="text-[10px] text-slate-500 mb-0.5">浣犵殑姝ユ暟</p>
                         <p className="text-2xl font-bold text-blue-600">{result.summary.steps}</p>
                       </div>
                       <div className="text-center p-3 rounded-lg bg-green-50 border border-green-200">
-                        <p className="text-[10px] text-slate-500 mb-0.5">最优步数</p>
+                        <p className="text-[10px] text-slate-500 mb-0.5">Optimal steps</p>
                         <p className="text-2xl font-bold text-green-600">{result.summary.optimalSteps}</p>
                       </div>
                       <div className="text-center p-3 rounded-lg bg-slate-50 border border-slate-200">
-                        <p className="text-[10px] text-slate-500 mb-0.5">效率评分</p>
+                        <p className="text-[10px] text-slate-500 mb-0.5">鏁堢巼璇勫垎</p>
                         <div className="flex items-center justify-center gap-1">
                           <p className={`text-2xl font-bold bg-gradient-to-r ${getEfficiencyColor(result.summary.efficiency)} bg-clip-text text-transparent`}>
                             {result.summary.efficiency.toFixed(1)}
@@ -464,7 +504,7 @@ export default function AnalyzePage() {
                         </div>
                       </div>
                       <div className="text-center p-3 rounded-lg bg-purple-50 border border-purple-200">
-                        <p className="text-[10px] text-slate-500 mb-0.5">预估用时</p>
+                        <p className="text-[10px] text-slate-500 mb-0.5">棰勪及鐢ㄦ椂</p>
                         <p className="text-2xl font-bold text-purple-600">{result.summary.estimatedTime}s</p>
                       </div>
                     </div>
@@ -477,7 +517,7 @@ export default function AnalyzePage() {
                     <CardHeader className="border-b border-slate-100">
                       <CardTitle className="flex items-center gap-2">
                         <Zap className="w-4 h-4 text-orange-500" />
-                        优化建议
+                        浼樺寲寤鸿
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="pt-3 space-y-2">
@@ -488,18 +528,18 @@ export default function AnalyzePage() {
                         >
                           <div className="flex items-start justify-between mb-2">
                             <span className="text-[10px] px-2 py-0.5 rounded bg-orange-500 text-white">
-                              可节省 {opt.savings} 步
+                              鍙妭鐪?{opt.savings} 姝?
                             </span>
                           </div>
                           <div className="space-y-1 text-xs">
                             <div className="flex items-center gap-1">
-                              <span className="text-slate-500">原:</span>
+                              <span className="text-slate-500">鍘?</span>
                               <code className="bg-slate-100 px-1.5 py-0.5 rounded font-cube text-[10px] text-slate-700">
                                 {opt.from}
                               </code>
                             </div>
                             <div className="flex items-center gap-1">
-                              <span className="text-slate-500">优化:</span>
+                              <span className="text-slate-500">浼樺寲:</span>
                               <code className="bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-cube text-[10px]">
                                 {opt.to}
                               </code>
@@ -517,7 +557,7 @@ export default function AnalyzePage() {
                     <CardHeader className="border-b border-slate-100">
                       <CardTitle className="flex items-center gap-2">
                         <Sparkles className="w-4 h-4 text-blue-500" />
-                        识别的公式
+                        璇嗗埆鐨勫叕寮?
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="pt-3">
@@ -541,7 +581,7 @@ export default function AnalyzePage() {
                   <Card className="card-cube border border-slate-200 shadow-sm result-card" style={{ animationDelay: '400ms' }}>
                     <CardHeader className="border-b border-slate-100">
                       <CardTitle className="flex items-center gap-2">
-                        📚 新公式推荐
+                        馃摎 鏂板叕寮忔帹鑽?
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="pt-3 space-y-3">
@@ -575,7 +615,7 @@ export default function AnalyzePage() {
                     <CardHeader className="border-b border-slate-100">
                       <CardTitle className="flex items-center gap-2">
                         <Target className="w-4 h-4 text-green-500" />
-                        参考最优解
+                        鍙傝€冩渶浼樿В
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="pt-3">
@@ -586,15 +626,15 @@ export default function AnalyzePage() {
                   </Card>
                 )}
 
-                {/* ========== 增强分析结果 ========== */}
+                {/* ========== 澧炲己鍒嗘瀽缁撴灉 ========== */}
 
-                {/* 步骤定位分析 */}
+                {/* 姝ラ瀹氫綅鍒嗘瀽 */}
                 {result.stepOptimizations && result.stepOptimizations.length > 0 && (
                   <Card className="card-cube shadow-sm result-card" style={{ animationDelay: '700ms' }}>
                     <CardHeader className="border-b border-slate-100">
                       <CardTitle className="flex items-center gap-2">
                         <MapPin className="w-4 h-4 text-red-500" />
-                        问题定位分析
+                        闂瀹氫綅鍒嗘瀽
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="pt-3 space-y-2">
@@ -602,17 +642,17 @@ export default function AnalyzePage() {
                         <div key={idx} className="bg-red-50 p-3 rounded-lg border border-red-200">
                           <div className="flex items-center gap-2 mb-1">
                             <span className="text-xs px-2 py-0.5 rounded bg-red-500 text-white">
-                              第{opt.stepRange[0]}-{opt.stepRange[1]}步
+                              Step {opt.stepRange[0]}-{opt.stepRange[1]}
                             </span>
                             <span className="text-xs font-semibold text-red-700">{opt.problemType}</span>
                           </div>
                           <div className="grid grid-cols-2 gap-2 text-xs mb-1">
                             <div>
-                              <span className="text-slate-500">原:</span>
+                              <span className="text-slate-500">鍘?</span>
                               <code className="ml-1 bg-slate-100 px-1 rounded">{opt.originalMoves}</code>
                             </div>
                             <div>
-                              <span className="text-slate-500">优化:</span>
+                              <span className="text-slate-500">浼樺寲:</span>
                               <code className="ml-1 bg-green-100 text-green-700 px-1 rounded">{opt.optimizedMoves}</code>
                             </div>
                           </div>
@@ -623,13 +663,13 @@ export default function AnalyzePage() {
                   </Card>
                 )}
 
-                {/* 时间分解 */}
+                {/* 鏃堕棿鍒嗚В */}
                 {result.timeBreakdown && result.timeBreakdown.length > 0 && (
                   <Card className="card-cube shadow-sm result-card" style={{ animationDelay: '800ms' }}>
                     <CardHeader className="border-b border-slate-100">
                       <CardTitle className="flex items-center gap-2">
                         <Clock className="w-4 h-4 text-blue-500" />
-                        时间分解
+                        鏃堕棿鍒嗚В
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="pt-3">
@@ -663,12 +703,12 @@ export default function AnalyzePage() {
                   </Card>
                 )}
 
-                {/* F2L槽位分析 */}
+                {/* F2L妲戒綅鍒嗘瀽 */}
                 {result.f2lSlots && result.f2lSlots.slots && result.f2lSlots.slots.length > 0 && (
                   <Card className="card-cube shadow-sm result-card" style={{ animationDelay: '900ms' }}>
                     <CardHeader className="border-b border-slate-100">
                       <CardTitle className="flex items-center gap-2">
-                        🎲 F2L 槽位分析
+                        馃幉 F2L 妲戒綅鍒嗘瀽
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="pt-3">
@@ -685,8 +725,8 @@ export default function AnalyzePage() {
                           }
                           return (
                             <div key={idx} className={`p-2 rounded-lg border ${getEfficiencyColor(slot.efficiency)}`}>
-                              <div className="text-xs font-medium mb-1">{slot.slotNumber}号槽</div>
-                              <div className="text-lg font-bold">{slot.steps}步</div>
+                              <div className="text-xs font-medium mb-1">{slot.slotNumber}鍙锋Ы</div>
+                              <div className="text-lg font-bold">{slot.steps} steps</div>
                               {slot.usedFormula && (
                                 <div className="text-[10px] text-slate-600">{slot.usedFormula}</div>
                               )}
@@ -696,65 +736,65 @@ export default function AnalyzePage() {
                       </div>
                       {result.f2lSlots.orderSuggestion && (
                         <div className="text-xs text-slate-600 bg-blue-50 p-2 rounded">
-                          💡 {result.f2lSlots.orderSuggestion}
+                          馃挕 {result.f2lSlots.orderSuggestion}
                         </div>
                       )}
                     </CardContent>
                   </Card>
                 )}
 
-                {/* 顶层识别 (OLL/PLL) */}
+                {/* 椤跺眰璇嗗埆 (OLL/PLL) */}
                 {(result.ollCase || result.pllCase) && (
                   <Card className="card-cube shadow-sm result-card" style={{ animationDelay: '1000ms' }}>
                     <CardHeader className="border-b border-slate-100">
                       <CardTitle className="flex items-center gap-2">
-                        🔯 顶层识别
+                        馃敮 椤跺眰璇嗗埆
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="pt-3 space-y-3">
                       {result.ollCase && (
                         <div>
-                          <div className="text-xs text-slate-500 mb-1">OLL 情况</div>
+                          <div className="text-xs text-slate-500 mb-1">OLL 鎯呭喌</div>
                           <div className="font-medium text-sm">{result.ollCase.caseName}</div>
-                          <div className="text-xs text-slate-500">你的步数: {result.ollCase.userSteps} / 最优: {result.ollCase.optimalSteps}</div>
+                          <div className="text-xs text-slate-500">浣犵殑姝ユ暟: {result.ollCase.userSteps} / 鏈€浼? {result.ollCase.optimalSteps}</div>
                         </div>
                       )}
                       {result.pllCase && (
                         <div>
-                          <div className="text-xs text-slate-500 mb-1">PLL 情况</div>
+                          <div className="text-xs text-slate-500 mb-1">PLL 鎯呭喌</div>
                           <div className="font-medium text-sm">{result.pllCase.caseName}</div>
-                          <div className="text-xs text-slate-500">你的步数: {result.pllCase.userSteps} / 最优: {result.pllCase.optimalSteps}</div>
+                          <div className="text-xs text-slate-500">浣犵殑姝ユ暟: {result.pllCase.userSteps} / 鏈€浼? {result.pllCase.optimalSteps}</div>
                         </div>
                       )}
                     </CardContent>
                   </Card>
                 )}
 
-                {/* 与高级玩家对比 */}
+                {/* 涓庨珮绾х帺瀹跺姣?*/}
                 {result.comparison && result.comparison.length > 0 && (
                   <Card className="card-cube shadow-sm result-card" style={{ animationDelay: '1100ms' }}>
                     <CardHeader className="border-b border-slate-100">
                       <CardTitle className="flex items-center gap-2">
                         <TrendingUp className="w-4 h-4 text-purple-500" />
-                        与高级玩家对比
+                        涓庨珮绾х帺瀹跺姣?
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="pt-3">
                       <table className="w-full text-xs">
                         <thead>
                           <tr className="border-b border-slate-200">
-                            <th className="text-left py-1 text-slate-500">阶段</th>
-                            <th className="text-right py-1 text-slate-500">你的步数</th>
-                            <th className="text-right py-1 text-slate-500">高级玩家</th>
-                            <th className="text-right py-1 text-slate-500">提升空间</th>
+                            <th className="text-left py-1 text-slate-500">闃舵</th>
+                            <th className="text-right py-1 text-slate-500">浣犵殑姝ユ暟</th>
+                            <th className="text-right py-1 text-slate-500">楂樼骇鐜╁</th>
+                            <th className="text-right py-1 text-slate-500">鎻愬崌绌洪棿</th>
                           </tr>
                         </thead>
                         <tbody>
                           {result.comparison.map((comp: any, idx: number) => (
                             <tr key={idx} className="border-b border-slate-100">
                               <td className="py-1">{comp.stage}</td>
-                              <td className="text-right">{comp.userSteps}步</td>
-                              <td className="text-right">{comp.advancedSteps}步</td>
+                              <td className="text-right">{comp.userSteps} steps</td>
+                              <td className="text-right">{comp.advancedSteps} steps</td>
                               <td className="text-right font-medium text-blue-600">+{comp.improvementPotential}%</td>
                             </tr>
                           ))}
@@ -764,12 +804,12 @@ export default function AnalyzePage() {
                   </Card>
                 )}
 
-                {/* 优先改进建议 */}
+                {/* 浼樺厛鏀硅繘寤鸿 */}
                 {result.prioritizedRecommendations && result.prioritizedRecommendations.length > 0 && (
                   <Card className="card-cube border border-slate-200 shadow-sm result-card" style={{ animationDelay: '1200ms' }}>
                     <CardHeader className="border-b border-slate-100">
                       <CardTitle className="flex items-center gap-2">
-                        📋 本周改进计划
+                        馃搵 鏈懆鏀硅繘璁″垝
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="pt-3 space-y-3">
@@ -782,25 +822,25 @@ export default function AnalyzePage() {
                             <span className="font-semibold text-sm">{rec.title}</span>
                           </div>
                           <div className="text-xs text-slate-600 mb-2">
-                            <span className="text-slate-500">当前:</span> {rec.currentStatus} → <span className="text-slate-500">目标:</span> {rec.targetStatus}
+                            <span className="text-slate-500">褰撳墠:</span> {rec.currentStatus} 鈫?<span className="text-slate-500">鐩爣:</span> {rec.targetStatus}
                           </div>
-                          <div className="text-xs font-medium text-orange-700 mb-1">预计改进: {rec.estimatedImprovement}</div>
+                          <div className="text-xs font-medium text-orange-700 mb-1">棰勮鏀硅繘: {rec.estimatedImprovement}</div>
                           <div className="text-xs text-slate-500">
-                            <div className="font-medium mb-1">行动项:</div>
+                            <div className="font-medium mb-1">琛屽姩椤?</div>
                             <ul className="list-disc list-inside space-y-0.5">
                               {rec.actionItems.map((item: string, i: number) => (
                                 <li key={i}>{item}</li>
                               ))}
                             </ul>
                           </div>
-                          <div className="text-[10px] text-slate-400 mt-1">⏱️ {rec.timeToSeeResults}</div>
+                          <div className="text-[10px] text-slate-400 mt-1">鈴憋笍 {rec.timeToSeeResults}</div>
                         </div>
                       ))}
                     </CardContent>
                   </Card>
                 )}
 
-                {/* 手指技巧建议 */}
+                {/* 鎵嬫寚鎶€宸у缓璁?*/}
                 <CoachPlanCard result={result} />
 
                 {result.fingerprintTips && result.fingerprintTips.length > 0 && (
@@ -808,7 +848,7 @@ export default function AnalyzePage() {
                     <CardHeader className="border-b border-slate-100">
                       <CardTitle className="flex items-center gap-2">
                         <Fingerprint className="w-4 h-4 text-indigo-500" />
-                        手指技巧提示
+                        鎵嬫寚鎶€宸ф彁绀?
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="pt-3 space-y-2">
@@ -817,7 +857,7 @@ export default function AnalyzePage() {
                           <div className="text-xs font-medium mb-1">{tip.moveSequence}</div>
                           <div className="text-xs text-slate-600">{tip.description}</div>
                           <div className="text-[10px] text-indigo-600 mt-1">
-                            难度: {tip.difficulty === 'easy' ? '简单' : tip.difficulty === 'medium' ? '中等' : '较难'}
+                            Difficulty: {tip.difficulty === 'easy' ? 'Easy' : tip.difficulty === 'medium' ? 'Medium' : 'Hard'}
                           </div>
                         </div>
                       ))}
@@ -827,28 +867,28 @@ export default function AnalyzePage() {
               </div>
             )}
 
-            {/* Example Section - 未分析时显示 */}
+            {/* Example Section - 鏈垎鏋愭椂鏄剧ず */}
             {!result && (
               <Card className="card-cube shadow-sm">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <Zap className="w-4 h-4 text-orange-500" />
-                    使用示例
+                    浣跨敤绀轰緥
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="grid md:grid-cols-3 gap-3">
                     <div className="p-3 rounded-lg bg-gradient-to-br from-orange-50 to-transparent border border-orange-100">
-                      <div className="text-xl mb-1">1️⃣</div>
-                      <p className="text-xs text-slate-600">输入你使用的打乱公式，或使用默认示例</p>
+                      <div className="text-xl mb-1">1锔忊儯</div>
+                      <p className="text-xs text-slate-600">杈撳叆浣犱娇鐢ㄧ殑鎵撲贡鍏紡锛屾垨浣跨敤榛樿绀轰緥</p>
                     </div>
                     <div className="p-3 rounded-lg bg-gradient-to-br from-blue-50 to-transparent border border-blue-100">
-                      <div className="text-xl mb-1">2️⃣</div>
-                      <p className="text-xs text-slate-600">使用虚拟键盘或直接输入复原步骤</p>
+                      <div className="text-xl mb-1">2锔忊儯</div>
+                      <p className="text-xs text-slate-600">Enter your solve formula in the keyboard area.</p>
                     </div>
                     <div className="p-3 rounded-lg bg-gradient-to-br from-purple-50 to-transparent border border-purple-100">
-                      <div className="text-xl mb-1">3️⃣</div>
-                      <p className="text-xs text-slate-600">点击"开始分析"查看AI分析结果</p>
+                      <div className="text-xl mb-1">3锔忊儯</div>
+                      <p className="text-xs text-slate-600">鐐瑰嚮"寮€濮嬪垎鏋?鏌ョ湅AI鍒嗘瀽缁撴灉</p>
                     </div>
                   </div>
                 </CardContent>
@@ -856,15 +896,15 @@ export default function AnalyzePage() {
             )}
           </div>
 
-          {/* 右侧：魔方展开图 + 最优解（桌面端） */}
+          {/* 鍙充晶锛氶瓟鏂瑰睍寮€鍥?+ 鏈€浼樿В锛堟闈㈢锛?*/}
           <div className="hidden lg:block w-[320px] space-y-4 lg:sticky lg:top-6">
-            {/* 魔方展开图 */}
+            {/* 榄旀柟灞曞紑鍥?*/}
             {showCube && cubeState && (
               <Card className="card-cube border border-slate-200 shadow-sm">
                 <CardHeader className="border-b border-slate-100 pb-3">
                   <CardTitle className="flex items-center gap-2 text-sm">
                     <Box className="w-4 h-4 text-purple-500" />
-                    魔方展开图
+                    榄旀柟灞曞紑鍥?
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="pt-3">
@@ -876,35 +916,44 @@ export default function AnalyzePage() {
               </Card>
             )}
 
-            {/* 最优解卡片 */}
-            {optimalResult && (
+            {/* 鏈€浼樿В鍗＄墖 */}
+            {(optimalResult || generatingOptimal) && (
               <Card className="card-cube border border-slate-200 shadow-sm">
                 <CardHeader className="border-b border-slate-100 pb-3">
                   <CardTitle className="flex items-center gap-2 text-sm">
                     <Target className="w-4 h-4 text-green-500" />
-                    最优解
-                    {generatingOptimal && <span className="text-xs text-slate-400">生成中...</span>}
+                    鏈€浼樿В
+                    {generatingOptimal && <span className="text-xs text-slate-400">鐢熸垚涓?..</span>}
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="pt-3 space-y-3">
-                  {/* 步数 */}
+                  {/* 姝ユ暟 */}
                   <div className="text-center p-2 rounded-lg bg-green-50 border border-green-200">
-                    <p className="text-[10px] text-slate-500">最优步数</p>
-                    <p className="text-2xl font-bold text-green-600">{optimalResult.steps}</p>
+                    <p className="text-[10px] text-slate-500">Optimal steps</p>
+                    <p className="text-2xl font-bold text-green-600">{optimalResult?.steps || '-'}</p>
                   </div>
 
-                  {/* 最优解公式 */}
+                  {/* 鏈€浼樿В鍏紡 */}
                   <div>
-                    <p className="text-[10px] text-slate-500 mb-1">解法公式:</p>
+                    <p className="text-[10px] text-slate-500 mb-1">瑙ｆ硶鍏紡:</p>
                     <code className="block bg-slate-100 p-2 rounded text-xs break-all font-cube border border-slate-200 text-slate-800">
-                      {optimalResult.optimalSolution}
+                      {optimalResult?.optimalSolution || `Solving... (${optimalStage || 'CFOP'})`}
                     </code>
                   </div>
 
-                  {/* 识别的公式 */}
+                  {optimalResult?.cfop && (
+                    <div className="text-[10px] text-slate-600 space-y-1">
+                      <div><span className="text-slate-500">Cross:</span> {optimalResult.cfop?.cross?.moves || '-'}</div>
+                      <div><span className="text-slate-500">F2L:</span> {optimalResult.cfop?.f2l?.moves || '-'}</div>
+                      <div><span className="text-slate-500">OLL:</span> {optimalResult.cfop?.oll?.moves || '-'}</div>
+                      <div><span className="text-slate-500">PLL:</span> {optimalResult.cfop?.pll?.moves || '-'}</div>
+                    </div>
+                  )}
+
+                  {/* 璇嗗埆鐨勫叕寮?*/}
                   {optimalResult.formulas && optimalResult.formulas.length > 0 && (
                     <div>
-                      <p className="text-[10px] text-slate-500 mb-1">包含公式:</p>
+                      <p className="text-[10px] text-slate-500 mb-1">鍖呭惈鍏紡:</p>
                       <div className="flex flex-wrap gap-1">
                         {optimalResult.formulas.map((formula: any, idx: number) => (
                           <span
@@ -918,14 +967,14 @@ export default function AnalyzePage() {
                     </div>
                   )}
 
-                  {/* 解说 */}
+                  {/* 瑙ｈ */}
                   {optimalResult.explanations && optimalResult.explanations.length > 0 && (
                     <div>
-                      <p className="text-[10px] text-slate-500 mb-1">解说:</p>
+                      <p className="text-[10px] text-slate-500 mb-1">瑙ｈ:</p>
                       <ul className="text-[10px] text-slate-600 space-y-0.5">
                         {optimalResult.explanations.map((exp: string, idx: number) => (
                           <li key={idx} className="flex items-start gap-1">
-                            <span className="text-green-500">•</span>
+                            <span className="text-green-500">*</span>
                             <span>{exp}</span>
                           </li>
                         ))}
@@ -933,7 +982,7 @@ export default function AnalyzePage() {
                     </div>
                   )}
 
-                  {/* 重新生成按钮 */}
+                  {/* 閲嶆柊鐢熸垚鎸夐挳 */}
                   <Button
                     variant="outline"
                     size="sm"
@@ -941,19 +990,19 @@ export default function AnalyzePage() {
                     disabled={generatingOptimal}
                     className="w-full text-xs"
                   >
-                    {generatingOptimal ? '生成中...' : '刷新最优解'}
+                    {generatingOptimal ? '鐢熸垚涓?..' : '鍒锋柊鏈€浼樿В'}
                   </Button>
                 </CardContent>
               </Card>
             )}
 
-            {/* 提示卡片 */}
+            {/* 鎻愮ず鍗＄墖 */}
             {!cubeState && (
               <Card className="card-cube shadow-sm">
                 <CardContent className="p-4 text-center">
                   <Box className="w-8 h-8 text-slate-300 mx-auto mb-2" />
                   <p className="text-xs text-slate-500">
-                    输入打乱公式后，这里会显示魔方展开图和最优解
+                    杈撳叆鎵撲贡鍏紡鍚庯紝杩欓噷浼氭樉绀洪瓟鏂瑰睍寮€鍥惧拰鏈€浼樿В
                   </p>
                 </CardContent>
               </Card>
@@ -964,3 +1013,4 @@ export default function AnalyzePage() {
     </div>
   )
 }
+
