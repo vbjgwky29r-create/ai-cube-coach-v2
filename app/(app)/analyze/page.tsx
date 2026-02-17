@@ -1,4 +1,4 @@
-﻿'use client'
+'use client'
 
 import { useRef, useState, type ChangeEvent } from 'react'
 import { Button } from '@/components/ui/button'
@@ -88,16 +88,21 @@ export default function AnalyzePage() {
   const requestOptimal = async (normalized: string, signal: AbortSignal) => {
     let payload: AnyObj | null = null
     for (let i = 0; i < 2; i++) {
-      const response = await fetch('/api/cube/optimal', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scramble: normalized }),
-        signal,
-      })
-      payload = await response.json().catch(() => null)
-      if (response.ok) return { ok: true, data: payload }
-      if (response.status >= 500 && i === 0) continue
-      return { ok: false, data: payload }
+      try {
+        const response = await fetch('/api/cube/optimal', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ scramble: normalized }),
+          signal,
+        })
+        payload = await response.json().catch(() => null)
+        if (response.ok) return { ok: true, data: payload }
+        if (response.status >= 500 && i === 0 && !signal.aborted) continue
+        return { ok: false, data: payload }
+      } catch (error) {
+        if (i === 0 && !signal.aborted) continue
+        throw error
+      }
     }
     return { ok: false, data: payload }
   }
@@ -150,7 +155,7 @@ export default function AnalyzePage() {
     }, 2000)
 
     const controller = new AbortController()
-    const timeoutId = window.setTimeout(() => controller.abort(), 120000)
+    const timeoutId = window.setTimeout(() => controller.abort('optimal_timeout'), 180000)
 
     try {
       const { ok, data } = await requestOptimal(normalized, controller.signal)
@@ -172,7 +177,9 @@ export default function AnalyzePage() {
       setOptimalResult(data)
     } catch (e: any) {
       console.error('生成最优解失败:', e)
-      setOptimalError(e?.message || '生成最优解失败')
+      const msg = String(e?.message || '')
+      const isAbort = controller.signal.aborted || e?.name === 'AbortError' || /aborted|abort/i.test(msg)
+      setOptimalError(isAbort ? '生成超时，请点击“刷新最优解”重试。' : (msg || '生成最优解失败'))
       setOptimalResult((prev) => ({
         ...(prev || {}),
         scramble: normalized,
@@ -457,3 +464,4 @@ export default function AnalyzePage() {
     </div>
   )
 }
+

@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+set -eu
+
+echo "[pre-commit] Running UTF-8 guard..."
+npm run -s check:utf8 -- --staged
