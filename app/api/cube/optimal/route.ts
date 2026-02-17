@@ -17,17 +17,28 @@ const RATE_LIMIT = {
 const API_KEYS = (process.env.API_KEYS || '').split(',').filter(k => k.length > 0)
 const SKIP_AUTH_FOR_DEMO = process.env.NODE_ENV !== 'production'
 
-function normalizeScrambleForSolver(input: string): string {
-  const tokens = input.trim().split(/\s+/).filter(Boolean)
-  const normalizedTokens = tokens.map((token) => {
+function normalizeScrambleForSolver(input: string): { normalized: string; invalidTokens: string[] } {
+  const cleaned = input
+    .replace(/[’‘`´]/g, "'")
+    .replace(/[\u00A0\u3000]/g, ' ')
+    .trim()
+  const tokens = cleaned.split(/\s+/).filter(Boolean)
+  const invalidTokens: string[] = []
+  const normalizedTokens: string[] = []
+
+  for (const token of tokens) {
     const m = token.match(/^([RLUDFBrludfb])(2|'|2'|'2)?$/)
-    if (!m) return ''
+    if (!m) {
+      invalidTokens.push(token)
+      continue
+    }
     const face = m[1].toUpperCase()
     const suffixRaw = m[2] || ''
     const suffix = suffixRaw.includes('2') ? '2' : suffixRaw.includes("'") ? "'" : ''
-    return `${face}${suffix}`
-  })
-  return normalizedTokens.filter(Boolean).join(' ')
+    normalizedTokens.push(`${face}${suffix}`)
+  }
+
+  return { normalized: normalizedTokens.join(' '), invalidTokens }
 }
 
 function checkRateLimit(ip: string): boolean {
@@ -186,7 +197,17 @@ async function handleOptimalRequest(
     }
 
     const trimmedScramble = scramble.trim()
-    const normalizedScramble = normalizeScrambleForSolver(trimmedScramble)
+    const { normalized: normalizedScramble, invalidTokens } = normalizeScrambleForSolver(trimmedScramble)
+
+    if (invalidTokens.length > 0) {
+      return NextResponse.json(
+        {
+          error: `Invalid move token(s): ${invalidTokens.join(', ')}`,
+          hint: "Allowed tokens are R L U D F B with optional ' or 2",
+        },
+        { status: 400 }
+      )
+    }
 
     // 楠岃瘉杈撳叆锛堝厑璁稿ぇ鍐欍€佸皬鍐欏瓧姣嶅拰淇グ绗︼級
     const validChars = /^[RLUDFB\s'2]+$/
