@@ -46,6 +46,62 @@ export default function AnalyzePage() {
       .filter(Boolean)
       .join(' ')
 
+  const blobToBase64 = (blob: Blob) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => {
+        const result = String(reader.result || '')
+        const payload = result.includes(',') ? result.split(',')[1] : result
+        resolve(payload)
+      }
+      reader.onerror = () => reject(new Error('failed_to_read_image'))
+      reader.readAsDataURL(blob)
+    })
+
+  const compressImage = async (file: File): Promise<Blob> => {
+    if (!file.type.startsWith('image/')) return file
+    const objectUrl = URL.createObjectURL(file)
+    try {
+      const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const img = new Image()
+        img.onload = () => resolve(img)
+        img.onerror = () => reject(new Error('failed_to_decode_image'))
+        img.src = objectUrl
+      })
+      const maxSide = 1600
+      const scale = Math.min(1, maxSide / Math.max(image.width, image.height))
+      const width = Math.max(1, Math.round(image.width * scale))
+      const height = Math.max(1, Math.round(image.height * scale))
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return file
+      ctx.drawImage(image, 0, 0, width, height)
+      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.82))
+      return blob || file
+    } finally {
+      URL.revokeObjectURL(objectUrl)
+    }
+  }
+
+  const requestOptimal = async (normalized: string, signal: AbortSignal) => {
+    let payload: AnyObj | null = null
+    for (let i = 0; i < 2; i++) {
+      const response = await fetch('/api/cube/optimal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scramble: normalized }),
+        signal,
+      })
+      payload = await response.json().catch(() => null)
+      if (response.ok) return { ok: true, data: payload }
+      if (response.status >= 500 && i === 0) continue
+      return { ok: false, data: payload }
+    }
+    return { ok: false, data: payload }
+  }
+
   const generateOptimal = async () => {
     const trimmed = scramble.trim()
     if (!trimmed || trimmed.length < 3) {
@@ -94,18 +150,11 @@ export default function AnalyzePage() {
     }, 2000)
 
     const controller = new AbortController()
-    const timeoutId = window.setTimeout(() => controller.abort(), 90000)
+    const timeoutId = window.setTimeout(() => controller.abort(), 120000)
 
     try {
-      const response = await fetch('/api/cube/optimal', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scramble: normalized }),
-        signal: controller.signal,
-      })
-
-      const data = await response.json().catch(() => null)
-      if (!response.ok) {
+      const { ok, data } = await requestOptimal(normalized, controller.signal)
+      if (!ok) {
         setOptimalError(data?.error || '生成最优解失败')
         if (data) {
           setOptimalResult((prev) => ({
@@ -175,16 +224,8 @@ export default function AnalyzePage() {
 
     try {
       setOcrLoading(true)
-      const base64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onload = () => {
-          const result = String(reader.result || '')
-          const payload = result.includes(',') ? result.split(',')[1] : result
-          resolve(payload)
-        }
-        reader.onerror = () => reject(new Error('failed_to_read_image'))
-        reader.readAsDataURL(file)
-      })
+      const compressed = await compressImage(file)
+      const base64 = await blobToBase64(compressed)
 
       const response = await fetch('/api/ocr/cube-formula', {
         method: 'POST',

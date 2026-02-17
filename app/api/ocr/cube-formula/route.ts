@@ -6,6 +6,36 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 
+export const maxDuration = 60
+
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, { ...init, signal: controller.signal })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function requestVolcengineWithRetry(url: string, init: RequestInit, attempts = 3): Promise<Response> {
+  let lastError: unknown = null
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const response = await fetchWithTimeout(url, init, 25000)
+      if (response.ok) return response
+      if (response.status < 500 && response.status !== 429) return response
+      lastError = new Error(`upstream status ${response.status}`)
+    } catch (error) {
+      lastError = error
+    }
+    if (i < attempts - 1) {
+      await new Promise((resolve) => setTimeout(resolve, 400 * (i + 1)))
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('upstream request failed')
+}
+
 /**
  * 后处理：修正常见的 OCR 识别错误
  */
@@ -264,7 +294,7 @@ SOLUTION: [复原公式]`
       : '请分析这张魔方星球截图，提取所有数据并提供专业级分析。请严格按照 JSON 格式输出。'
 
     // 调用火山引擎 Vision API
-    const response = await fetch(`${baseURL}/chat/completions`, {
+    const response = await requestVolcengineWithRetry(`${baseURL}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -395,7 +425,10 @@ SOLUTION: [复原公式]`
 
   } catch (error: unknown) {
     console.error('[OCR Cube Formula] 错误:', error)
-    const errorMessage = error instanceof Error ? error.message : 'OCR识别失败'
+    const rawError = error instanceof Error ? error.message : 'OCR request failed'
+    const errorMessage = /fetch failed|aborted|network|timeout/i.test(rawError)
+      ? 'OCR upstream network timeout, please retry'
+      : rawError
     return NextResponse.json(
       { error: errorMessage },
       { status: 500 }
