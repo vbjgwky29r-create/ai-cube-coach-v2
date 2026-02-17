@@ -194,8 +194,11 @@ export default function AnalyzePage() {
   const getEfficiencyInfo = getEfficiencyLabel(0)
 
   // 获取魔方状态用于可视化
-  const cubeState: CubeState | null = optimalResult?.cubeState
-    ? unflattenCubeState(optimalResult.cubeState)
+  const cubeStateRaw = optimalResult?.cubeState
+  const cubeState: CubeState | null = cubeStateRaw
+    ? (typeof cubeStateRaw === 'string'
+      ? unflattenCubeState(cubeStateRaw)
+      : cubeStateRaw)
     : null
 
   return (
