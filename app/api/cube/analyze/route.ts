@@ -484,6 +484,24 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    const userStageInfo = analyzeUserStages(trimmedScramble, trimmedSolution)
+    if (!userStageInfo.userSolved) {
+      logger.api('POST', '/api/cube/analyze', 400, Date.now() - startTime, {
+        requestId,
+        error: 'user_solution_not_solved',
+        totalSteps: userStageInfo.totalSteps,
+      })
+      return NextResponse.json(
+        {
+          error: '该解法无法还原到完成状态，请先检查打乱或解法后再分析。',
+          code: 'USER_SOLUTION_NOT_SOLVED',
+          solvedAt: userStageInfo.solvedAt,
+          totalSteps: userStageInfo.totalSteps,
+        },
+        { status: 400 }
+      )
+    }
+
     // 先求解并验证完整 CFOP，再做分阶段对比建议
     const cfopCached = getCachedValue(cfopReferenceCache, trimmedScramble) as
       | {
@@ -564,7 +582,6 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    const userStageInfo = analyzeUserStages(trimmedScramble, trimmedSolution)
     const cfopStageSteps = {
       cross: cfop.cross.steps,
       f2l: cfop.f2l.steps,
@@ -572,30 +589,32 @@ export async function POST(req: NextRequest) {
       pll: cfop.pll.steps,
     }
     const stageComparison = cfopVerified ? buildStageComparison(userStageInfo.stages, cfopStageSteps) : []
+    const fallbackCoachRecommendations = buildCoachRecommendations({
+      userSolved: userStageInfo.userSolved,
+      userStages: userStageInfo.stages,
+      cfopStages: cfopStageSteps,
+      userTotal: userStageInfo.totalSteps,
+      cfopTotal: cfop.totalSteps,
+    })
+    const modelRecommendations: CoachRecommendation[] = Array.isArray(result.prioritizedRecommendations)
+      ? result.prioritizedRecommendations.map((rec: any, idx: number) => ({
+          priority: Number(rec?.priority || idx + 1),
+          title: String(rec?.title || '训练建议'),
+          area: String(rec?.area || 'Overall'),
+          currentStatus: String(rec?.currentStatus || ''),
+          targetStatus: String(rec?.targetStatus || ''),
+          estimatedImprovement: String(rec?.estimatedImprovement || ''),
+          effort: rec?.effort === 'high' || rec?.effort === 'medium' || rec?.effort === 'low' ? rec.effort : 'medium',
+          actionItems: Array.isArray(rec?.actionItems) ? rec.actionItems.map((x: any) => String(x)) : [],
+          resourceLinks: Array.isArray(rec?.resourceLinks) && rec.resourceLinks.length > 0
+            ? rec.resourceLinks.map((x: any) => ({ title: String(x?.title || '学习资源'), url: String(x?.url || '') })).filter((x: { url: string }) => Boolean(x.url))
+            : resourcesForArea(String(rec?.area || 'Overall')),
+          timeToSeeResults: String(rec?.timeToSeeResults || '1-2 周'),
+        }))
+      : []
     const coachRecommendations = cfopVerified
-      ? buildCoachRecommendations({
-          userSolved: userStageInfo.userSolved,
-          userStages: userStageInfo.stages,
-          cfopStages: cfopStageSteps,
-          userTotal: userStageInfo.totalSteps,
-          cfopTotal: cfop.totalSteps,
-        })
-      : [{
-          priority: 1,
-          title: '参考解验证失败，先做稳定性训练',
-          area: 'Stability',
-          currentStatus: '当前请求未拿到可验证 CFOP 参考解',
-          targetStatus: '下一次请求拿到 verified 参考解后再做分阶段对比',
-          estimatedImprovement: '优先避免线上失败重试',
-          effort: 'low' as const,
-          actionItems: [
-            '优先使用分步按钮检查：Cross -> F2L -> OLL -> PLL',
-            '遇到失败先重试一次同打乱，观察是否缓存命中',
-            '保持 scramble 规范输入（大写单层 + 标准后缀）',
-          ],
-          resourceLinks: [{ title: 'CFOP Learning Path', url: 'https://jperm.net/3x3/cfop' }],
-          timeToSeeResults: '立即',
-        }]
+      ? fallbackCoachRecommendations
+      : (modelRecommendations.length > 0 ? modelRecommendations : fallbackCoachRecommendations)
     const weeklyPlan = buildWeeklyPlan(coachRecommendations)
 
     const duration = Date.now() - startTime
@@ -633,13 +652,11 @@ export async function POST(req: NextRequest) {
         compareAfterFullCFOP: cfopVerified,
         note: cfopVerified
           ? 'Stage comparison is generated only after reference CFOP full verification succeeds.'
-          : 'Degraded mode: reference CFOP is not verified; stage comparison is skipped for this request.',
+          : 'Reference CFOP is not verified for this request; stage comparison is skipped.',
       },
-      warning: cfopVerified ? undefined : 'Reference CFOP verification failed. Returned degraded analyze result.',
-      degraded: !cfopVerified || !!result.degraded,
-      degradedReason: !cfopVerified
-        ? (result.degradedReason || 'cfop_reference_not_verified')
-        : result.degradedReason,
+      warning: undefined,
+      degraded: !!result.degraded,
+      degradedReason: result.degradedReason,
       cached: false,
     }
 

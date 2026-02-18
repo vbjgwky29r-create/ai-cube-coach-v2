@@ -446,8 +446,19 @@ export default function AnalyzePage() {
   const topRecommendations = Array.isArray(result?.prioritizedRecommendations)
     ? result.prioritizedRecommendations.slice(0, 3)
     : []
+  const stepOptimizations = Array.isArray(result?.stepOptimizations)
+    ? result.stepOptimizations.slice(0, 8)
+    : []
   const resultWarning = typeof result?.warning === 'string' ? result.warning : ''
   const resultDegraded = Boolean(result?.degraded)
+  const isReferenceVerificationWarning =
+    resultWarning.includes('Reference CFOP verification failed') ||
+    resultWarning.includes('参考解未通过验证')
+  const showWarningBanner = Boolean(resultWarning) && !isReferenceVerificationWarning
+  const showDegradedBanner =
+    resultDegraded &&
+    !isReferenceVerificationWarning &&
+    String(result?.degradedReason || '') !== 'cfop_reference_not_verified'
 
   return (
     <div className="min-h-screen py-4 sm:py-6">
@@ -569,12 +580,12 @@ export default function AnalyzePage() {
                 {analyzeError && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-3 mb-3">{analyzeError}</div>}
                 {!analyzeError && (
                   <div className="space-y-3">
-                    {resultWarning && (
+                    {showWarningBanner && (
                       <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-3">
                         {resultWarning}
                       </div>
                     )}
-                    {resultDegraded && (
+                    {showDegradedBanner && (
                       <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-3">
                         参考解未通过验证，本次结果按降级模式展示，请重试同一打乱或更换打乱再分析。
                       </div>
@@ -598,6 +609,33 @@ export default function AnalyzePage() {
                           <p className="text-[10px] text-slate-500">等级</p>
                           <p className="text-sm font-semibold text-slate-800">{String(summary.level || '-')}</p>
                         </div>
+                      </div>
+                    )}
+
+                    {stepOptimizations.length > 0 && (
+                      <div className="space-y-2">
+                        <p className="text-xs font-semibold text-slate-700">动作问题定位（按优先级）</p>
+                        {stepOptimizations.map((item: AnyObj, idx: number) => {
+                          const range = Array.isArray(item?.stepRange) ? item.stepRange : []
+                          const rangeText = range.length === 2 ? `${range[0]}-${range[1]}` : '-'
+                          const before = String(item?.originalMoves || '')
+                          const after = String(item?.optimizedMoves || '')
+                          const reason = String(item?.reason || item?.problemType || '')
+                          return (
+                            <div key={`opt-${idx}`} className="bg-slate-50 border border-slate-200 rounded p-2">
+                              <p className="text-[11px] font-semibold text-slate-800">
+                                {idx + 1}. 第 {rangeText} 步
+                              </p>
+                              <p className="text-[11px] text-slate-700">
+                                原动作: <span className="font-cube">{before || '-'}</span>
+                              </p>
+                              <p className="text-[11px] text-slate-700">
+                                建议: <span className="font-cube">{after || '-'}</span>
+                              </p>
+                              <p className="text-[11px] text-slate-500">{reason}</p>
+                            </div>
+                          )
+                        })}
                       </div>
                     )}
 
