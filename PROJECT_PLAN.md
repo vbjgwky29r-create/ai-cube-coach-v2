@@ -1,246 +1,130 @@
-# AI Cube Coach - 项目核心计划
+# AI Cube Coach - Merged Project Plan
 
-> **项目代号**: `ai-cube-coach`
-> **创建日期**: 2025-02-02
-> **状态**: 🚧 开发中
-> **严格等级**: ⚠️ 本计划为核心指导文档，所有开发决策需与之保持一致
+Last Updated: 2026-02-18
+Status: Active
 
----
+## 0. 不变的产品目标（固定）
+- 项目定位不变：AI 魔方教练。
+- 核心价值不变：
+  1. 求解器给出真实 CFOP 解法（不是逆打乱）。
+  2. 与人类解法对比。
+  3. 生成可执行的训练建议。
 
-## 一、产品定位
+## 1. 固定约束（必须遵守）
+- 求解必须严格按 `Cross -> F2L -> OLL -> PLL`。
+- 禁止把 inverse scramble 作为用户解法输出。
+- Cross 是 F2L 的前置基础：Cross 不通过，不进入 F2L。
+- 每次验证必须输出：
+  - `Scramble`
+  - `Solution`
+  - 分阶段验证结果（Cross/F2L/Final solved）
+- 优先使用仓库 verified 样例验证；新增样例使用 WCA 20 步打乱。
 
-### 1.1 核心理念
+## 2. 合并后的执行策略（研究型迭代）
 
-```
-不是"帮我解"，而是"教我解得更好"
-```
+### 2.1 基线与回归（先做）
+- 建立固定回归集：`VERIFIED_TEST_CASES.md` + `VERIFIED_SCRAMBLES.md`。
+- 建立统一验证脚本：自动回放并给出阶段通过率。
+- 验收口径统一为“可回放 + 可复原 + 可解释”。
 
-| 传统求解器 | AI Cube Coach |
-|-----------|---------------|
-| 给你答案 | 教你怎么解得更好 |
-| 用完就走 | 持续学习追踪 |
-| 无个性化 | 完全个性化分析 |
-| 不跟踪进度 | 完整学习档案 |
+### 2.2 求解器主链重构（中期重点）
+- 统一单一主链入口：`Cross -> F2L -> OLL -> PLL`。
+- 旧实验求解器（legacy）仅保留作对照，不作为默认结果来源。
+- 所有阶段输出统一数据结构（moves / steps / case / verified）。
 
-### 1.2 目标用户
+### 2.3 F2L 专项攻坚（核心难点）
+- 采用“分层法 + permutation/cp-ep/co-eo + 查表(PDB)”混合策略。
+- 每个槽位输出：识别状态、选用case、求解结果。
+- 目标：从“部分槽位成功”提升到“4槽稳定完成”。
 
-- **主要**: 魔方初学者 → 进阶者（会解但想优化）
-- **次要**: 培训机构教练（教学辅助工具）
-- **未来**: 竞速选手（训练工具）
+### 2.4 OLL/PLL 稳定化（并行）
+- 保留并增强已有识别器能力。
+- 输出可教学标签（case id/case name/替代公式）。
 
----
+### 2.5 教练对比引擎（在求解稳定后）
+- 人类解 vs 求解器解：
+  - 总步数差
+  - 分阶段步数差
+  - 冗余操作识别
+  - 推荐替换公式
 
-## 二、核心功能（MVP范围）
+## 3. MVP（需求不变）
+- 输入打乱公式后，返回真实 CFOP 四阶段解法。
+- 返回每阶段步数与总步数。
+- 返回阶段验证结果（Cross/F2L/最终复原）。
+- 支持基础公式输入与可视化反馈。
+- 禁止逆打乱作为结果输出。
 
-### 2.1 功能优先级
+## 4. 后续更新计划（需求不变）
+- 在 MVP 稳定后逐步增强：
+  1. 提升 F2L 覆盖率与稳定性（混合求解器 + PDB）。
+  2. 提高“最快可解释 CFOP”质量。
+  3. 完善教练型建议输出（面向训练改进）。
 
-| 优先级 | 功能 | 描述 | 状态 |
-|--------|------|------|------|
-| P0 | 打乱公式输入 | 用户输入标准打乱公式 | ⏳ 待开发 |
-| P0 | 用户解法输入 | 用户输入自己的复原公式 | ⏳ 待开发 |
-| P0 | AI解法分析 | 分析步数、效率、识别公式 | ⏳ 待开发 |
-| P0 | 优化建议生成 | 对比最优解，给出优化建议 | ⏳ 待开发 |
-| P0 | 知识讲解 | 解释新公式、为什么更好 | ⏳ 待开发 |
-| P1 | 用户档案 | 学习记录、掌握公式列表 | ⏳ 待开发 |
-| P1 | 复习系统 | 基于遗忘曲线的复习提醒 | ⏳ 待开发 |
-| P2 | 3D魔方可视化 | 可视化魔方状态和公式 | ⏳ 待开发 |
-| P2 | 练习模式 | 互动练习新学的公式 | ⏳ 待开发 |
+### 4.1 内测后商用 API 扩展计划（高并发）
+- 目标：从“单实例可用”升级为“可承载商业 API 并发”的稳定架构。
+- 分阶段路线：
+  1. API 网关层：
+     - API Key 鉴权、按套餐配额、QPS/并发限流。
+     - 限流和配额存储迁移到 Redis（替代进程内 Map）。
+  2. 计算异步化：
+     - 提供 `submit job` + `query job` 模式，重计算请求入队。
+     - Worker 集群消费队列，支持失败重试和超时控制。
+  3. 分层缓存：
+     - L1 进程内短缓存 + L2 Redis 结果缓存。
+     - 按 `scramble + mode + solverVersion` 做缓存键，支持热点预热。
+  4. 稳定性治理：
+     - 统一超时、重试、熔断、降级策略。
+     - 建立 P50/P95 延迟、失败率、队列积压、单 key 成本监控。
+  5. 商业化接口能力：
+     - 套餐分层（fast/full）、配额透传、账单统计与审计日志。
 
-### 2.2 MVP 核心流程
+## 5. 最终版（需求不变）
+- 求解器包含高级公式体系：`COLL / ZB / ZBLL`（含 case 识别与教学输出）。
+- 商业化能力完整：
+  - 付费
+  - 订阅
+  - API Key 订阅形态
+- 免费/付费仅做能力分层，不影响基础求解正确性。
 
-```
-用户登录/注册
-    ↓
-输入打乱公式 + 自己的解法
-    ↓
-AI分析并返回:
-- 解法质量评分
-- 优化建议
-- 新公式讲解
-    ↓
-保存到学习档案
-    ↓
-后续可查看档案 + 复习
-```
+## 6. 当前优先级（Now)
+1. Cross/F2L 正确率与稳定性
+2. 分阶段验证闭环
+3. 教练对比输出
+4. 付费与订阅系统
 
----
+## 7. 近期验收标准
+- 可在 verified 样例上稳定给出 `Scramble + Solution` 并回放复原。
+- Cross 通过后再进入 F2L，且状态检查可追踪。
+- API 返回中包含分阶段验证字段。
 
-## 三、技术架构
+## 8. 阶段记录（2026-02-16）
+### 已完成
+1. F2L 选槽策略升级为“先评估再决策”：
+- 每轮先评估各未完成槽位的“转标态成本”。
+- 评分维度：状态层级、步数、转体成本、B 面成本。
+2. F2L 正确性修复：
+- 修复“输出槽位公式但槽位未完成”的问题（未完成自动回滚）。
+- 保证槽位求解不破坏 Cross 与已锁定槽位。
+3. OLL 兜底增强：
+- 新增宏动作 BFS 兜底（保前两层不破坏）。
+4. 可观测性增强：
+- 增加 `slotHistory`（时序槽位公式）。
+- 增加 `roundScores`（每轮槽位评分明细）。
 
-### 3.1 技术栈
+### 验证结果（WCA 两条）
+1. `F' U2 R' F B2 U F R' B2 R2 F2 B2 R' F2 L D2 R' U2 B`
+- Verified: `true`
+- Total: `51`
+2. `B' R D F2 U' R' D B' D' U2 B2 U2 L U2 L' D2 L2 B2 U2 L'`
+- Verified: `true`
+- Total: `59`
 
-```
-前端:
-├── Next.js 14 (App Router)
-├── React 18
-├── TypeScript
-├── Tailwind CSS
-├── shadcn/ui (UI组件)
-└── cubing.js (魔方库，后续集成)
+### 当前风险
+- 局部样例中仍可能出现“人类可执行性不佳（虽可还原但不够顺手）”的 F2L 序列。
+- 评分权重仍需继续调优（当前偏正确率，步数仍有下降空间）。
 
-后端:
-├── Next.js API Routes
-├── Prisma (ORM)
-└── PostgreSQL (Supabase)
-
-AI/算法:
-├── Kociemba算法 (最优解)
-├── 自研公式识别引擎
-├── 对比分析算法
-└── 讲解生成逻辑
-
-支付:
-├── Xorpay (微信 + 支付宝)
-├── USDT直接转账
-└── 待定: NowPayments
-```
-
-### 3.2 项目结构
-
-```
-ai-cube-coach/
-├── app/
-│   ├── (marketing)/          # 营销页面
-│   ├── (app)/                # 主应用
-│   │   ├── dashboard/        # 用户仪表板
-│   │   ├── analyze/          # 核心功能：分析解法
-│   │   ├── profile/          # 用户档案
-│   │   └── review/           # 复习系统
-│   ├── api/                  # API路由
-│   ├── layout.tsx
-│   └── page.tsx
-├── components/
-│   ├── ui/                   # shadcn/ui组件
-│   ├── cube/                 # 魔方相关组件
-│   ├── analyze/              # 分析功能组件
-│   └── profile/              # 档案相关组件
-├── lib/
-│   ├── db.ts                 # Prisma客户端
-│   ├── auth.ts               # 认证逻辑
-│   ├── cube/                 # 魔方算法
-│   └── utils.ts
-├── prisma/
-│   ├── schema.prisma
-│   └── seed.ts
-├── types/
-│   └── index.ts
-├── PROJECT_PLAN.md           # 本文件
-└── README.md
-```
-
----
-
-## 四、数据模型
-
-```prisma
-// 用户
-model User {
-  id            String    @id @default(cuid())
-  email         String    @unique
-  name          String?
-  tier          Tier      @default(FREE)
-  level         Level     @default(BEGINNER)
-  analyses      SolutionAnalysis[]
-  mastered      MasteredFormula[]
-  reviews       ReviewSchedule[]
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-}
-
-enum Tier {
-  FREE
-  PRO
-  LIFETIME
-}
-
-enum Level {
-  BEGINNER
-  INTERMEDIATE
-  ADVANCED
-}
-
-// 解法分析记录
-model SolutionAnalysis {
-  id              String    @id @default(cuid())
-  userId          String
-  scramble        String
-  userSolution    String
-  optimalSolution String?
-  qualityScore    Float     @default(0)
-  steps           Int       @default(0)
-  formulasUsed    String[]
-  optimizations   Json?
-  newFormulas     String[]
-  createdAt       DateTime  @default(now())
-}
-
-// 掌握的公式
-model MasteredFormula {
-  id              String    @id @default(cuid())
-  userId          String
-  formulaId       String
-  formulaName     String
-  practiceCount   Int       @default(0)
-  masteryLevel    Int       @default(0)
-  nextReviewAt    DateTime
-  createdAt       DateTime  @default(now())
-  @@unique([userId, formulaId])
-}
-
-// 公式库
-model FormulaLibrary {
-  id              String    @id @default(cuid())
-  name            String
-  notation        String
-  category        FormulaCategory
-  difficulty      Int       @default(1)
-  explanation     String
-  createdAt       DateTime  @default(now())
-}
-
-enum FormulaCategory {
-  CROSS
-  F2L
-  OLL
-  PLL
-  TRICKS
-}
-```
-
----
-
-## 五、开发阶段
-
-### Phase 1: 基础架构 (Week 1-2)
-- [x] 项目初始化
-- [ ] Prisma + Supabase
-- [ ] NextAuth.js
-- [ ] shadcn/ui
-
-### Phase 2: 核心功能 (Week 3-5)
-- [ ] 公式解析器
-- [ ] Kociemba求解器
-- [ ] 公式识别引擎
-- [ ] AI分析API
-
-### Phase 3: 用户档案 (Week 6-7)
-- [ ] 用户档案页面
-- [ ] 复习系统
-
-### Phase 4: 支付集成 (Week 8)
-- [ ] Xorpay集成
-- [ ] USDT支付
-
----
-
-## 六、商业模式
-
-| 套餐 | 价格 | 限制 |
-|------|------|------|
-| 免费版 | ¥0 | 每天3次分析 |
-| Pro月付 | ¥29/月 | 无限分析 |
-| 终身版 | ¥499 | 永久使用 |
-
----
-
-> **版本**: v1.0 | **更新**: 2025-02-02
+### 下一阶段
+1. 扩展 10-20 条 WCA 批量验证，统计通过率与步数分布。
+2. 用黄金样例继续调权重，优先优化“标态->入槽”的人类可执行性。
+3. 强化 BR/BL 的短公式优先级，减少复杂兜底插入。

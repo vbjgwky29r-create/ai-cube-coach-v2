@@ -1,4 +1,4 @@
-﻿/**
+/**
  * CFOP 姹傝В API
  *
  * 鎺ユ敹鎵撲贡鍏紡锛岃繑鍥?CFOP 鍒嗛樁娈佃В娉?
@@ -15,6 +15,15 @@ import {
   isF2LComplete,
   solveCFOPDetailedVerified,
 } from '@/lib/cube/cfop-latest'
+import { logger, generateRequestId } from '@/lib/utils/logger'
+
+const RATE_LIMIT = {
+  maxRequests: 20,
+  windowMs: 60 * 1000,
+}
+const RESULT_CACHE_TTL_MS = 5 * 60 * 1000
+const ipLimitMap = new Map<string, { count: number; resetTime: number }>()
+const resultCache = new Map<string, { expiresAt: number; payload: unknown }>()
 
 /**
  * 楠岃瘉榄旀柟鍏紡鏍煎紡
@@ -41,8 +50,58 @@ function normalizeFormula(formula: string): string {
     .replace(/\b([URFDLB])\b/g, (match) => match.toUpperCase())
 }
 
+function getRateLimitKey(headers: Headers): string {
+  const apiKey = headers.get('x-api-key') || headers.get('authorization') || ''
+  const ip = headers.get('x-forwarded-for') || headers.get('x-real-ip') || 'unknown'
+  const ua = (headers.get('user-agent') || '').slice(0, 120)
+  return apiKey ? `key:${apiKey}` : `ip:${ip}|ua:${ua}`
+}
+
+function checkRateLimit(key: string): boolean {
+  const now = Date.now()
+  const record = ipLimitMap.get(key)
+  if (!record || now > record.resetTime) {
+    ipLimitMap.set(key, {
+      count: 1,
+      resetTime: now + RATE_LIMIT.windowMs,
+    })
+    return true
+  }
+  if (record.count >= RATE_LIMIT.maxRequests) return false
+  record.count++
+  return true
+}
+
+function getCachedResult(key: string): unknown | null {
+  const cached = resultCache.get(key)
+  if (!cached) return null
+  if (cached.expiresAt <= Date.now()) {
+    resultCache.delete(key)
+    return null
+  }
+  return cached.payload
+}
+
+function setCachedResult(key: string, payload: unknown): void {
+  resultCache.set(key, {
+    expiresAt: Date.now() + RESULT_CACHE_TTL_MS,
+    payload,
+  })
+}
+
 export async function POST(request: NextRequest) {
+  const requestId = generateRequestId()
+  const startTime = Date.now()
   try {
+    const rateKey = getRateLimitKey(request.headers)
+    if (!checkRateLimit(rateKey)) {
+      logger.warn('Rate limit exceeded', { requestId, rateKey, endpoint: 'cfop-solve' })
+      return NextResponse.json(
+        { error: '请求过于频繁，请稍后再试', success: false },
+        { status: 429 }
+      )
+    }
+
     const { scramble } = await request.json()
 
     // 楠岃瘉杈撳叆
@@ -54,6 +113,13 @@ export async function POST(request: NextRequest) {
     }
 
     const normalized = normalizeFormula(scramble)
+    const cached = getCachedResult(normalized)
+    if (cached) {
+      return NextResponse.json({
+        ...(cached as Record<string, unknown>),
+        cached: true,
+      })
+    }
 
     if (!validateFormula(normalized)) {
       return NextResponse.json(
@@ -77,7 +143,7 @@ export async function POST(request: NextRequest) {
     }
     const verified = solution.verified && stageValidation.solvedAfterFull
 
-    return NextResponse.json({
+    const payload = {
       success: true,
       scramble: normalized,
       solution: {
@@ -107,15 +173,21 @@ export async function POST(request: NextRequest) {
       },
       verified,
       stageValidation,
-    })
+      cached: false,
+    }
+    setCachedResult(normalized, payload)
+    logger.api('POST', '/api/cube/cfop-solve', 200, Date.now() - startTime, { requestId, verified })
+    return NextResponse.json(payload)
 
-  } catch (error: any) {
-    console.error('[CFOP Solve API] Error:', error)
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : '求解失败'
+    logger.error('[CFOP Solve API] Error', { requestId, duration: Date.now() - startTime, message })
 
     return NextResponse.json(
       {
-        error: error.message || '姹傝В澶辫触',
+        error: message || '姹傝В澶辫触',
         success: false,
+        retryable: true,
       },
       { status: 500 }
     )

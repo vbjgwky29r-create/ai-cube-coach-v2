@@ -18,6 +18,10 @@ const RATE_LIMIT = {
   maxRequests: 10,        // 每分钟最多请求数
   windowMs: 60 * 1000,    // 1分钟窗口
 }
+const ANALYZE_CACHE_TTL_MS = 2 * 60 * 1000
+const CFOP_REF_CACHE_TTL_MS = 5 * 60 * 1000
+const analyzeResponseCache = new Map<string, { expiresAt: number; payload: unknown }>()
+const cfopReferenceCache = new Map<string, { expiresAt: number; payload: unknown }>()
 
 const INPUT_LIMITS = {
   maxScrambleLength: 500,   // 打乱公式最大长度
@@ -68,6 +72,36 @@ function checkRateLimit(ip: string): boolean {
 
   record.count++
   return true
+}
+
+function getRateLimitKey(headers: Headers): string {
+  const apiKey = headers.get('x-api-key') || headers.get('authorization') || ''
+  const ip = headers.get('x-forwarded-for') || headers.get('x-real-ip') || 'unknown'
+  const ua = (headers.get('user-agent') || '').slice(0, 120)
+  return apiKey ? `key:${apiKey}` : `ip:${ip}|ua:${ua}`
+}
+
+function getCachedValue(cache: Map<string, { expiresAt: number; payload: unknown }>, key: string): unknown | null {
+  const now = Date.now()
+  const cached = cache.get(key)
+  if (!cached) return null
+  if (cached.expiresAt <= now) {
+    cache.delete(key)
+    return null
+  }
+  return cached.payload
+}
+
+function setCachedValue(
+  cache: Map<string, { expiresAt: number; payload: unknown }>,
+  key: string,
+  payload: unknown,
+  ttlMs: number,
+): void {
+  cache.set(key, {
+    expiresAt: Date.now() + ttlMs,
+    payload,
+  })
 }
 
 function validateInput(scramble: string, solution: string): { valid: boolean; error?: string } {
@@ -397,11 +431,11 @@ export async function POST(req: NextRequest) {
   try {
     // 获取IP地址 (Next.js 15+ 使用 headers 获取)
     const headers = req.headers
-    const ip = headers.get('x-forwarded-for') || headers.get('x-real-ip') || 'unknown'
+    const rateKey = getRateLimitKey(headers)
 
     // 速率限制检查
-    if (!checkRateLimit(ip)) {
-      logger.warn('Rate limit exceeded', { requestId, ip })
+    if (!checkRateLimit(rateKey)) {
+      logger.warn('Rate limit exceeded', { requestId, rateKey })
       return NextResponse.json(
         { error: '请求过于频繁，请稍后再试' },
         { status: 429 }
@@ -411,7 +445,7 @@ export async function POST(req: NextRequest) {
     // API 认证检查
     const authResult = checkAuth(headers)
     if (!authResult.valid) {
-      logger.warn('Authentication failed', { requestId, ip, error: authResult.error })
+      logger.warn('Authentication failed', { requestId, rateKey, error: authResult.error })
       return NextResponse.json(
         { error: authResult.error || '认证失败' },
         { status: 401 }
@@ -419,9 +453,20 @@ export async function POST(req: NextRequest) {
     }
 
     const { scramble, solution } = await req.json()
+    const trimmedScramble = String(scramble || '').trim()
+    const trimmedSolution = String(solution || '').trim()
+    const cacheKey = `${trimmedScramble}||${trimmedSolution}`
+
+    const cachedResponse = getCachedValue(analyzeResponseCache, cacheKey)
+    if (cachedResponse) {
+      return NextResponse.json({
+        ...(cachedResponse as Record<string, unknown>),
+        cached: true,
+      })
+    }
 
     // 验证输入存在
-    if (!scramble || !solution) {
+    if (!trimmedScramble || !trimmedSolution) {
       logger.api('POST', '/api/cube/analyze', 400, Date.now() - startTime, { requestId, error: 'Missing parameters' })
       return NextResponse.json(
         { error: '缺少必要参数: scramble 和 solution' },
@@ -430,7 +475,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 验证输入内容
-    const validation = validateInput(scramble.trim(), solution.trim())
+    const validation = validateInput(trimmedScramble, trimmedSolution)
     if (!validation.valid) {
       logger.api('POST', '/api/cube/analyze', 400, Date.now() - startTime, { requestId, error: validation.error })
       return NextResponse.json(
@@ -440,58 +485,127 @@ export async function POST(req: NextRequest) {
     }
 
     // 先求解并验证完整 CFOP，再做分阶段对比建议
-    const cfop = solveCFOPDetailedVerified(scramble.trim())
-    const replayStart = applyScrambleCFOP(createSolvedCubeState(), scramble.trim())
+    const cfopCached = getCachedValue(cfopReferenceCache, trimmedScramble) as
+      | {
+          cfop: ReturnType<typeof solveCFOPDetailedVerified>
+          stageValidation: { crossCompleteAfterCross: boolean; f2lCompleteAfterF2L: boolean; solvedAfterFull: boolean }
+          cfopVerified: boolean
+        }
+      | null
+
+    const cfop = cfopCached?.cfop || solveCFOPDetailedVerified(trimmedScramble)
+    const replayStart = applyScrambleCFOP(createSolvedCubeState(), trimmedScramble)
     const afterCross = cfop.cross.moves ? replayStart.move(cfop.cross.moves) : replayStart
     const afterF2L = cfop.f2l.moves ? afterCross.move(cfop.f2l.moves) : afterCross
     const afterOLL = cfop.oll.moves ? afterF2L.move(cfop.oll.moves) : afterF2L
     const afterPLL = cfop.pll.moves ? afterOLL.move(cfop.pll.moves) : afterOLL
-    const cfopStageValidation = {
+    const cfopStageValidation = cfopCached?.stageValidation || {
       crossCompleteAfterCross: isCrossComplete(afterCross),
       f2lCompleteAfterF2L: isF2LComplete(afterF2L),
       solvedAfterFull: afterPLL.isSolved(),
     }
-    const cfopVerified = cfop.verified && cfopStageValidation.solvedAfterFull
-
-    if (!cfopVerified) {
-      logger.error('CFOP reference verification failed', { requestId, scramble: scramble.trim(), cfopStageValidation })
-      return NextResponse.json(
-        { error: 'CFOP reference solve failed verification; analysis aborted for safety.' },
-        { status: 500 }
+    const cfopVerified = cfopCached?.cfopVerified ?? (cfop.verified && cfopStageValidation.solvedAfterFull)
+    if (!cfopCached) {
+      setCachedValue(
+        cfopReferenceCache,
+        trimmedScramble,
+        { cfop, stageValidation: cfopStageValidation, cfopVerified },
+        CFOP_REF_CACHE_TTL_MS,
       )
     }
+    if (!cfopVerified) {
+      logger.warn('CFOP reference verification failed, using degraded analyze response', {
+        requestId,
+        scramble: trimmedScramble,
+        cfopStageValidation,
+      })
+    }
 
-    // 调用分析引擎（增强版）
-    const result = await analyzeSolutionEnhanced({
-      scramble: scramble.trim(),
-      userSolution: solution.trim(),
-    })
+    // 调用分析引擎（增强版）；失败时降级，不中断整条分析链路
+    let result: Awaited<ReturnType<typeof analyzeSolutionEnhanced>> & { degraded?: boolean; degradedReason?: string }
+    try {
+      result = await analyzeSolutionEnhanced({
+        scramble: trimmedScramble,
+        userSolution: trimmedSolution,
+      })
+    } catch (analyzeError) {
+      const parsed = parseFormula(trimmedSolution)
+      const userSteps = parsed.isValid ? parsed.count : trimmedSolution.split(/\s+/).filter(Boolean).length
+      result = {
+        summary: {
+          userSteps,
+          optimalSteps: cfop.totalSteps,
+          efficiency: cfop.totalSteps > 0 ? Math.max(0, Math.min(100, Math.round((cfop.totalSteps / Math.max(userSteps, 1)) * 100))) : 0,
+          estimatedTime: Number((userSteps / 3.2).toFixed(2)),
+          level: userSteps <= 45 ? 'advanced' : userSteps <= 60 ? 'intermediate' : 'beginner',
+        },
+        stepOptimizations: [],
+        patterns: { inefficient: [], shortcuts: [] },
+        f2lSlots: undefined,
+        ollCase: undefined,
+        pllCase: undefined,
+        timeBreakdown: [],
+        tpsAnalysis: {
+          userTPS: 3.2,
+          level: 'intermediate',
+          levelName: '中级',
+          targetTPS: 4,
+          suggestion: 'Analyze engine degraded; focus on stable execution first.',
+        },
+        comparison: [],
+        prioritizedRecommendations: [],
+        fingerprintTips: [],
+        degraded: true,
+        degradedReason: analyzeError instanceof Error ? analyzeError.message : 'analyze_engine_failed',
+      }
+      logger.warn('Analyze engine degraded fallback', {
+        requestId,
+        reason: result.degradedReason,
+      })
+    }
 
-    const userStageInfo = analyzeUserStages(scramble.trim(), solution.trim())
+    const userStageInfo = analyzeUserStages(trimmedScramble, trimmedSolution)
     const cfopStageSteps = {
       cross: cfop.cross.steps,
       f2l: cfop.f2l.steps,
       oll: cfop.oll.steps,
       pll: cfop.pll.steps,
     }
-    const stageComparison = buildStageComparison(userStageInfo.stages, cfopStageSteps)
-    const coachRecommendations = buildCoachRecommendations({
-      userSolved: userStageInfo.userSolved,
-      userStages: userStageInfo.stages,
-      cfopStages: cfopStageSteps,
-      userTotal: userStageInfo.totalSteps,
-      cfopTotal: cfop.totalSteps,
-    })
+    const stageComparison = cfopVerified ? buildStageComparison(userStageInfo.stages, cfopStageSteps) : []
+    const coachRecommendations = cfopVerified
+      ? buildCoachRecommendations({
+          userSolved: userStageInfo.userSolved,
+          userStages: userStageInfo.stages,
+          cfopStages: cfopStageSteps,
+          userTotal: userStageInfo.totalSteps,
+          cfopTotal: cfop.totalSteps,
+        })
+      : [{
+          priority: 1,
+          title: '参考解验证失败，先做稳定性训练',
+          area: 'Stability',
+          currentStatus: '当前请求未拿到可验证 CFOP 参考解',
+          targetStatus: '下一次请求拿到 verified 参考解后再做分阶段对比',
+          estimatedImprovement: '优先避免线上失败重试',
+          effort: 'low' as const,
+          actionItems: [
+            '优先使用分步按钮检查：Cross -> F2L -> OLL -> PLL',
+            '遇到失败先重试一次同打乱，观察是否缓存命中',
+            '保持 scramble 规范输入（大写单层 + 标准后缀）',
+          ],
+          resourceLinks: [{ title: 'CFOP Learning Path', url: 'https://jperm.net/3x3/cfop' }],
+          timeToSeeResults: '立即',
+        }]
     const weeklyPlan = buildWeeklyPlan(coachRecommendations)
 
     const duration = Date.now() - startTime
     const steps = 'userSteps' in result.summary ? result.summary.userSteps : (result.summary as any).steps
     logger.api('POST', '/api/cube/analyze', 200, duration, { requestId, steps })
 
-    return NextResponse.json({
+    const payload = {
       ...result,
       cfopReference: {
-        scramble: scramble.trim(),
+        scramble: trimmedScramble,
         solution: cfop.solution,
         totalSteps: cfop.totalSteps,
         stages: cfopStageSteps,
@@ -516,10 +630,19 @@ export async function POST(req: NextRequest) {
         ],
       },
       policy: {
-        compareAfterFullCFOP: true,
-        note: 'Stage comparison is generated only after reference CFOP full verification succeeds.',
+        compareAfterFullCFOP: cfopVerified,
+        note: cfopVerified
+          ? 'Stage comparison is generated only after reference CFOP full verification succeeds.'
+          : 'Degraded mode: reference CFOP is not verified; stage comparison is skipped for this request.',
       },
-    })
+      warning: cfopVerified ? undefined : 'Reference CFOP verification failed. Returned degraded analyze result.',
+      degraded: !!result.degraded,
+      degradedReason: result.degradedReason,
+      cached: false,
+    }
+
+    setCachedValue(analyzeResponseCache, cacheKey, payload, ANALYZE_CACHE_TTL_MS)
+    return NextResponse.json(payload)
   } catch (e) {
     const duration = Date.now() - startTime
     logger.error('Analysis error', {

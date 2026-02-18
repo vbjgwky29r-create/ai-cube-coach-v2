@@ -12,6 +12,8 @@ const RATE_LIMIT = {
   maxRequests: 20,        // 姣忓垎閽熸渶澶氳姹傛暟
   windowMs: 60 * 1000,    // 1鍒嗛挓绐楀彛
 }
+const RESULT_CACHE_TTL_MS = 5 * 60 * 1000
+const resultCache = new Map<string, { expiresAt: number; payload: unknown }>()
 
 // API 瀵嗛挜閰嶇疆
 const API_KEYS = (process.env.API_KEYS || '').split(',').filter(k => k.length > 0)
@@ -61,6 +63,31 @@ function checkRateLimit(ip: string): boolean {
   return true
 }
 
+function getRateLimitKey(headers: Headers): string {
+  const apiKey = headers.get('x-api-key') || headers.get('authorization') || ''
+  const ip = headers.get('x-forwarded-for') || headers.get('x-real-ip') || 'unknown'
+  const ua = (headers.get('user-agent') || '').slice(0, 120)
+  return apiKey ? `key:${apiKey}` : `ip:${ip}|ua:${ua}`
+}
+
+function getCachedResult(key: string): unknown | null {
+  const now = Date.now()
+  const cached = resultCache.get(key)
+  if (!cached) return null
+  if (cached.expiresAt <= now) {
+    resultCache.delete(key)
+    return null
+  }
+  return cached.payload
+}
+
+function setCachedResult(key: string, payload: unknown): void {
+  resultCache.set(key, {
+    expiresAt: Date.now() + RESULT_CACHE_TTL_MS,
+    payload,
+  })
+}
+
 function checkAuth(headers: Headers): { valid: boolean; error?: string } {
   if (SKIP_AUTH_FOR_DEMO) {
     return { valid: true }
@@ -90,10 +117,10 @@ export async function GET(req: NextRequest) {
 
   // 璁よ瘉鍜岄€熺巼闄愬埗妫€鏌?
   const headers = req.headers
-  const ip = headers.get('x-forwarded-for') || headers.get('x-real-ip') || 'unknown'
+  const rateKey = getRateLimitKey(headers)
 
-  if (!checkRateLimit(ip)) {
-    logger.warn('Rate limit exceeded', { requestId, ip, endpoint: 'optimal' })
+  if (!checkRateLimit(rateKey)) {
+    logger.warn('Rate limit exceeded', { requestId, rateKey, endpoint: 'optimal' })
     return NextResponse.json(
       { error: '璇锋眰杩囦簬棰戠箒锛岃绋嶅悗鍐嶈瘯' },
       { status: 429 }
@@ -131,10 +158,10 @@ export async function POST(req: NextRequest) {
   try {
     // 璁よ瘉鍜岄€熺巼闄愬埗妫€鏌?
     const headers = req.headers
-    const ip = headers.get('x-forwarded-for') || headers.get('x-real-ip') || 'unknown'
+    const rateKey = getRateLimitKey(headers)
 
-    if (!checkRateLimit(ip)) {
-      logger.warn('Rate limit exceeded', { requestId, ip, endpoint: 'optimal' })
+    if (!checkRateLimit(rateKey)) {
+      logger.warn('Rate limit exceeded', { requestId, rateKey, endpoint: 'optimal' })
       return NextResponse.json(
         { error: '璇锋眰杩囦簬棰戠箒锛岃绋嶅悗鍐嶈瘯' },
         { status: 429 }
@@ -221,6 +248,15 @@ async function handleOptimalRequest(
     // 鑾峰彇榄旀柟鐘舵€?
     const cubeState = applyScramble(createSolvedCube(), normalizedScramble)
 
+    const cacheKey = normalizedScramble
+    const cached = getCachedResult(cacheKey)
+    if (cached) {
+      return NextResponse.json({
+        ...(cached as Record<string, unknown>),
+        cached: true,
+      })
+    }
+
     // 鐢熸垚 CFOP 鍙傝€冭В锛堜笉浣跨敤閫嗘墦涔卞瀷鏈€鐭В锛?
     const cfop = solveCFOPDetailedVerified(normalizedScramble)
     const optimalSolution = cfop.solution || ''
@@ -243,7 +279,7 @@ async function handleOptimalRequest(
     // 鐢熸垚鍏紡瑙ｈ
     const explanations = generateFormulaExplanations(optimalSolution, steps, recognizedFormulas)
 
-    return NextResponse.json({
+    const payload = {
       scramble: normalizedScramble,
       optimalSolution,
       steps,
@@ -259,7 +295,11 @@ async function handleOptimalRequest(
         pll: cfop.pll,
         verified: cfop.verified,
       },
-    })
+      cached: false,
+    }
+
+    setCachedResult(cacheKey, payload)
+    return NextResponse.json(payload)
   } catch (e: any) {
     console.error('Optimal solution error:', e)
     return NextResponse.json(

@@ -23,6 +23,7 @@ export default function AnalyzePage() {
   const [optimalProgress, setOptimalProgress] = useState(0)
   const [optimalStage, setOptimalStage] = useState('')
   const [result, setResult] = useState<AnyObj | null>(null)
+  const [analyzeError, setAnalyzeError] = useState<string | null>(null)
   const [optimalResult, setOptimalResult] = useState<AnyObj | null>(null)
   const [optimalError, setOptimalError] = useState<string | null>(null)
   const [ocrLoading, setOcrLoading] = useState(false)
@@ -273,6 +274,7 @@ export default function AnalyzePage() {
       return
     }
     setAnalyzing(true)
+    setAnalyzeError(null)
     const controller = new AbortController()
     const timeoutId = window.setTimeout(() => controller.abort('analyze_timeout'), 120000)
     try {
@@ -284,13 +286,14 @@ export default function AnalyzePage() {
       })
       const data = await response.json().catch(() => null)
       if (!response.ok) {
-        alert(data?.error || 'Analyze request failed')
+        const msg = data?.error || 'Analyze request failed'
+        setAnalyzeError(msg)
         return
       }
       setResult(data)
     } catch (e: any) {
       const isAbort = controller.signal.aborted || e?.name === 'AbortError'
-      alert(isAbort ? 'Analyze timeout, please retry.' : 'Analyze failed, please retry.')
+      setAnalyzeError(isAbort ? 'Analyze timeout, please retry.' : 'Analyze failed, please retry.')
     } finally {
       window.clearTimeout(timeoutId)
       setAnalyzing(false)
@@ -469,7 +472,7 @@ export default function AnalyzePage() {
             </CardContent>
           </Card>
 
-          {result && (
+          {(result || analyzeError) && (
             <Card className="border border-slate-200 shadow-sm">
               <CardHeader className="border-b border-slate-100">
                 <CardTitle className="flex items-center gap-2 text-sm">
@@ -478,6 +481,60 @@ export default function AnalyzePage() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-3">
+                {analyzeError && (
+                  <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-3 mb-3">
+                    {analyzeError}
+                  </div>
+                )}
+
+                {result?.summary && (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+                    <div className="bg-slate-50 border border-slate-200 rounded p-2">
+                      <p className="text-[10px] text-slate-500">Your Steps</p>
+                      <p className="text-sm font-semibold text-slate-800">{result.summary.userSteps ?? '-'}</p>
+                    </div>
+                    <div className="bg-slate-50 border border-slate-200 rounded p-2">
+                      <p className="text-[10px] text-slate-500">Optimal Steps</p>
+                      <p className="text-sm font-semibold text-slate-800">{result.summary.optimalSteps ?? '-'}</p>
+                    </div>
+                    <div className="bg-slate-50 border border-slate-200 rounded p-2">
+                      <p className="text-[10px] text-slate-500">Efficiency</p>
+                      <p className="text-sm font-semibold text-slate-800">{result.summary.efficiency ?? '-'}%</p>
+                    </div>
+                    <div className="bg-slate-50 border border-slate-200 rounded p-2">
+                      <p className="text-[10px] text-slate-500">Level</p>
+                      <p className="text-sm font-semibold text-slate-800">{String(result.summary.level || '-')}</p>
+                    </div>
+                  </div>
+                )}
+
+                {Array.isArray(result?.prioritizedRecommendations) && result.prioritizedRecommendations.length > 0 && (
+                  <div className="mb-3">
+                    <p className="text-xs font-semibold text-slate-700 mb-2">Top Recommendations</p>
+                    <div className="space-y-2">
+                      {result.prioritizedRecommendations.slice(0, 3).map((r: AnyObj, idx: number) => (
+                        <div key={`${r.title || 'rec'}-${idx}`} className="bg-slate-50 border border-slate-200 rounded p-2">
+                          <p className="text-xs font-semibold text-slate-800">{idx + 1}. {r.title || 'Recommendation'}</p>
+                          <p className="text-[11px] text-slate-600">{r.estimatedImprovement || r.currentStatus || ''}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {Array.isArray(result?.stageComparison) && result.stageComparison.length > 0 && (
+                  <div className="mb-3">
+                    <p className="text-xs font-semibold text-slate-700 mb-2">Stage Comparison</p>
+                    <div className="space-y-1">
+                      {result.stageComparison.map((s: AnyObj, idx: number) => (
+                        <div key={`${s.stage || 'stage'}-${idx}`} className="text-[11px] text-slate-700">
+                          {s.stage}: user {s.userSteps ?? '-'} / optimal {s.optimalSteps ?? '-'} / gap {s.gap ?? '-'}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <pre className="text-xs whitespace-pre-wrap bg-slate-50 p-3 rounded border border-slate-200">{JSON.stringify(result, null, 2)}</pre>
               </CardContent>
             </Card>
