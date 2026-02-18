@@ -155,6 +155,7 @@ export async function POST(request: NextRequest) {
           moves: solution.f2l.moves,
           steps: solution.f2l.steps,
           slots: solution.f2l.slots,
+          slotHistory: solution.f2l.slotHistory,
         },
         oll: {
           moves: solution.oll.moves,

@@ -1,7 +1,6 @@
 import Link from "next/link"
-import { Button } from "@/components/ui/button"
 import Image from "next/image"
-import { SHOW_COMMERCIAL_UI } from "@/lib/internal-beta"
+import { Button } from "@/components/ui/button"
 
 export function Navbar() {
   return (
@@ -9,10 +8,10 @@ export function Navbar() {
       <div className="container flex h-16 items-center justify-between">
         <Link href="/" className="flex items-center space-x-3 hover:opacity-80 transition-opacity">
           <div className="relative w-8 h-8">
-            <Image src="/logo.png" alt="AI Cube Coach" fill className="object-contain" />
+            <Image src="/logo.png" alt="弘弈AI魔方教练" fill className="object-contain" />
           </div>
-          <span className="font-bold text-xl hidden sm:inline bg-clip-text text-transparent bg-gradient-to-r from-slate-900 to-blue-600 dark:from-white dark:to-blue-400">
-            AI Cube Coach
+          <span className="font-bold text-lg sm:text-xl bg-clip-text text-transparent bg-gradient-to-r from-slate-900 to-blue-600 dark:from-white dark:to-blue-400">
+            弘弈AI魔方教练
           </span>
         </Link>
 
@@ -21,28 +20,18 @@ export function Navbar() {
             分析
           </Link>
           <Link href="/profile" className="text-sm font-medium hover:text-blue-600 transition-colors">
-            画像
+            个人中心
           </Link>
           <Link href="/review" className="text-sm font-medium hover:text-blue-600 transition-colors">
             复盘
           </Link>
-          {SHOW_COMMERCIAL_UI && (
-            <>
-              <Link href="/pricing" className="text-sm font-medium hover:text-blue-600 transition-colors">
-                定价
-              </Link>
-              <Link href="/api-docs" className="text-sm font-medium hover:text-blue-600 transition-colors">
-                API
-              </Link>
-            </>
-          )}
         </div>
 
         <div className="flex items-center space-x-3">
           <Button variant="ghost" size="sm" asChild>
             <Link href="/login">登录</Link>
           </Button>
-          <Button size="sm" className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700" asChild>
+          <Button size="sm" className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800" asChild>
             <Link href="/signup">注册</Link>
           </Button>
         </div>

@@ -1,11 +1,11 @@
-﻿import type { Metadata } from 'next'
+import type { Metadata } from 'next'
 import './globals.css'
 import { Navbar } from '@/components/navbar'
 import { Footer } from '@/components/footer'
 
 export const metadata: Metadata = {
-  title: 'AI魔方教练',
-  description: 'AI 辅助魔方学习与 CFOP 还原分析平台。',
+  title: '弘弈AI魔方教练',
+  description: '弘弈AI魔方教练，提供专业的 CFOP 分析与训练平台。',
 }
 
 export default function RootLayout({
