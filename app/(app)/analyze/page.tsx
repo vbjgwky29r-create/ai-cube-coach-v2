@@ -14,10 +14,8 @@ import { applyScramble, createSolvedCube, unflattenCubeState, type CubeState } f
 
 type AnyObj = Record<string, any>
 type Stage = 'cross' | 'f2l' | 'oll' | 'pll'
-type StageStatus = 'idle' | 'loading' | 'ready'
 
 type StageView = {
-  status: StageStatus
   moves: string
   steps: number
   note: string
@@ -34,10 +32,10 @@ const STAGE_LABEL: Record<Stage, string> = {
 
 function createEmptyStageViews(): Record<Stage, StageView> {
   return {
-    cross: { status: 'idle', moves: '', steps: 0, note: '' },
-    f2l: { status: 'idle', moves: '', steps: 0, note: '', slots: [] },
-    oll: { status: 'idle', moves: '', steps: 0, note: '' },
-    pll: { status: 'idle', moves: '', steps: 0, note: '' },
+    cross: { moves: '', steps: 0, note: '' },
+    f2l: { moves: '', steps: 0, note: '', slots: [] },
+    oll: { moves: '', steps: 0, note: '' },
+    pll: { moves: '', steps: 0, note: '' },
   }
 }
 
@@ -82,18 +80,16 @@ export default function AnalyzePage() {
   const [result, setResult] = useState<AnyObj | null>(null)
   const [analyzeError, setAnalyzeError] = useState<string | null>(null)
 
+  const [solvingSteps, setSolvingSteps] = useState(false)
+  const [stageResult, setStageResult] = useState<AnyObj | null>(null)
+  const [stageViews, setStageViews] = useState<Record<Stage, StageView>>(createEmptyStageViews())
+  const [stageError, setStageError] = useState<string | null>(null)
+
   const [generatingOptimal, setGeneratingOptimal] = useState(false)
   const [optimalProgress, setOptimalProgress] = useState(0)
   const [optimalStage, setOptimalStage] = useState('')
   const [optimalResult, setOptimalResult] = useState<AnyObj | null>(null)
   const [optimalError, setOptimalError] = useState<string | null>(null)
-
-  const [stageResult, setStageResult] = useState<AnyObj | null>(null)
-  const [stageScramble, setStageScramble] = useState('')
-  const [stageViews, setStageViews] = useState<Record<Stage, StageView>>(createEmptyStageViews())
-  const [stageRequested, setStageRequested] = useState<Stage[]>([])
-  const [stageActive, setStageActive] = useState<Stage | null>(null)
-  const [stageError, setStageError] = useState<string | null>(null)
 
   const [ocrLoading, setOcrLoading] = useState(false)
   const [showKeyboard, setShowKeyboard] = useState(true)
@@ -121,20 +117,29 @@ export default function AnalyzePage() {
       const suffix = suffixRaw.includes('2') ? '2' : suffixRaw.includes("'") ? "'" : ''
       normalizedTokens.push(`${face}${suffix}`)
     }
-    return {
-      normalized: normalizedTokens.join(' '),
-      invalidTokens,
-      inputCount: tokens.length,
-    }
+    return { normalized: normalizedTokens.join(' '), invalidTokens, inputCount: tokens.length }
   }
 
-  const resetStageProgress = (normalized: string) => {
-    setStageScramble(normalized)
-    setStageResult(null)
-    setStageViews(createEmptyStageViews())
-    setStageRequested([])
-    setStageActive(null)
-    setStageError(null)
+  const updateStageViewsFromResult = (data: AnyObj) => {
+    const next = createEmptyStageViews()
+    for (const stage of STAGE_ORDER) {
+      const raw = data?.solution?.[stage] || {}
+      const moves = String(raw?.moves || '').trim()
+      const stepsRaw = Number(raw?.steps || 0)
+      const steps = Number.isFinite(stepsRaw) ? stepsRaw : 0
+      const note = moves
+        ? ''
+        : stage === 'pll'
+          ? 'PLL Skip（已在 OLL 后完成）'
+          : '该阶段已完成（0 步）'
+      next[stage] = {
+        moves,
+        steps,
+        note,
+        slots: stage === 'f2l' ? normalizeF2LSlots(raw?.slots, raw?.slotHistory) : undefined,
+      }
+    }
+    setStageViews(next)
   }
 
   const ensureStageResult = async (normalized: string) => {
@@ -150,7 +155,7 @@ export default function AnalyzePage() {
       })
       const data = await response.json().catch(() => null)
       if (!response.ok || !data?.success) {
-        throw new Error(data?.error || '阶段求解失败')
+        throw new Error(data?.error || '分步求解失败')
       }
       setStageResult(data)
       return data
@@ -159,26 +164,7 @@ export default function AnalyzePage() {
     }
   }
 
-  const updateStageViewsFromResult = (data: AnyObj) => {
-    const next = createEmptyStageViews()
-    for (const stage of STAGE_ORDER) {
-      const raw = data?.solution?.[stage] || {}
-      const moves = String(raw?.moves || '').trim()
-      const stepsRaw = Number(raw?.steps || 0)
-      const steps = Number.isFinite(stepsRaw) ? stepsRaw : 0
-      const note = moves ? '' : '该阶段已完成（0 步）'
-      next[stage] = {
-        status: 'ready',
-        moves,
-        steps,
-        note,
-        slots: stage === 'f2l' ? normalizeF2LSlots(raw?.slots, raw?.slotHistory) : undefined,
-      }
-    }
-    setStageViews(next)
-  }
-
-  const handleStageSolve = async (stage: Stage) => {
+  const handleSolveSteps = async () => {
     const { normalized, invalidTokens, inputCount } = parseScrambleInput(scramble.trim())
     if (inputCount === 0 || !normalized) {
       setStageError('请先输入打乱公式。')
@@ -188,34 +174,15 @@ export default function AnalyzePage() {
       setStageError(`打乱公式包含非法符号: ${invalidTokens.join(', ')}`)
       return
     }
-
-    if (stageScramble && stageScramble !== normalized) {
-      resetStageProgress(normalized)
-    } else if (!stageScramble) {
-      setStageScramble(normalized)
-    }
-
     setStageError(null)
-    setStageActive(stage)
-    setStageRequested((prev) => (prev.includes(stage) ? prev : [...prev, stage]))
-    setStageViews((prev) => ({
-      ...prev,
-      [stage]: {
-        ...prev[stage],
-        status: 'loading',
-        note: '计算中...',
-      },
-    }))
-
+    setSolvingSteps(true)
     try {
       const data = await ensureStageResult(normalized)
       updateStageViewsFromResult(data)
     } catch (e: any) {
-      setStageViews((prev) => ({
-        ...prev,
-        [stage]: { ...prev[stage], status: 'idle', note: '' },
-      }))
-      setStageError(String(e?.message || '阶段求解失败'))
+      setStageError(String(e?.message || '分步求解失败'))
+    } finally {
+      setSolvingSteps(false)
     }
   }
 
@@ -223,8 +190,8 @@ export default function AnalyzePage() {
     new Promise<string>((resolve, reject) => {
       const reader = new FileReader()
       reader.onload = () => {
-        const content = String(reader.result || '')
-        resolve(content.includes(',') ? content.split(',')[1] : content)
+        const result = String(reader.result || '')
+        resolve(result.includes(',') ? result.split(',')[1] : result)
       }
       reader.onerror = () => reject(new Error('图片读取失败'))
       reader.readAsDataURL(blob)
@@ -360,14 +327,6 @@ export default function AnalyzePage() {
       const { ok, data } = await requestOptimal(normalized, controller.signal)
       if (!ok) {
         setOptimalError(data?.error || '推荐解生成失败')
-        if (data) {
-          setOptimalResult((prev) => ({
-            ...(prev || {}),
-            ...data,
-            cubeState: data.cubeState || prev?.cubeState || seedCubeState,
-            explanations: data.explanations || [data.error || '暂未得到可验证的完整解法。'],
-          }))
-        }
         return
       }
       setOptimalProgress(100)
@@ -375,7 +334,7 @@ export default function AnalyzePage() {
       setOptimalResult(data)
     } catch (e: any) {
       const msg = String(e?.message || '')
-      const isAbort = controller.signal.aborted || e?.name === 'AbortError' || /aborted|abort/i.test(msg)
+      const isAbort = controller.signal.aborted || e?.name === 'AbortError'
       setOptimalError(isAbort ? '生成超时，请重试。' : msg || '推荐解生成失败')
     } finally {
       window.clearInterval(progressTimer)
@@ -433,9 +392,7 @@ export default function AnalyzePage() {
         body: JSON.stringify({ image: base64, mode: 'simple' }),
       })
       const data = await response.json().catch(() => ({}))
-      if (!response.ok) {
-        throw new Error(typeof data?.error === 'string' ? data.error : 'OCR 请求失败')
-      }
+      if (!response.ok) throw new Error(typeof data?.error === 'string' ? data.error : 'OCR 请求失败')
       if (data.scramble) setScramble(data.scramble)
       if (data.solution) setSolution(data.solution)
       if (!data.scramble && !data.solution) {
@@ -469,23 +426,28 @@ export default function AnalyzePage() {
     if (keyboardTarget === 'scramble') {
       setScramble('')
       setOptimalResult(null)
-      setOptimalError(null)
-      resetStageProgress('')
+      setStageResult(null)
+      setStageViews(createEmptyStageViews())
+      setStageError(null)
     } else {
       setSolution('')
     }
   }
-
-  const handleSpace = () => handleKeyboardInput(' ')
 
   const cubeStateRaw = optimalResult?.cubeState
   const cubeState: CubeState | null = cubeStateRaw
     ? (typeof cubeStateRaw === 'string' ? unflattenCubeState(cubeStateRaw) : cubeStateRaw)
     : null
 
-  const summaryReady = stageRequested.includes('pll') && STAGE_ORDER.every((s) => stageViews[s].status === 'ready')
   const stageSummaryFormula = STAGE_ORDER.map((s) => stageViews[s].moves).filter(Boolean).join(' ')
   const stageSummarySteps = STAGE_ORDER.reduce((sum, s) => sum + (stageViews[s].steps || 0), 0)
+  const hasStageResult = STAGE_ORDER.some((s) => stageViews[s].moves || stageViews[s].note)
+  const summary = result?.summary || null
+  const topRecommendations = Array.isArray(result?.prioritizedRecommendations)
+    ? result.prioritizedRecommendations.slice(0, 3)
+    : []
+  const resultWarning = typeof result?.warning === 'string' ? result.warning : ''
+  const resultDegraded = Boolean(result?.degraded)
 
   return (
     <div className="min-h-screen py-4 sm:py-6">
@@ -518,71 +480,46 @@ export default function AnalyzePage() {
                   </div>
                 </div>
                 <Input value={scramble} readOnly onClick={() => setKeyboardTarget('scramble')} placeholder="请输入打乱公式" className="font-cube text-sm cursor-pointer" />
-                {generatingOptimal && (
-                  <div className="mt-2">
-                    <Progress value={optimalProgress} className="h-2" />
-                    <div className="mt-1 flex items-center justify-between text-[10px] text-slate-500">
-                      <span>{optimalStage || '求解中'}</span>
-                      <span>{Math.round(optimalProgress)}%</span>
-                    </div>
-                  </div>
-                )}
-                <div className="mt-3 grid grid-cols-5 gap-2">
-                  <button onClick={generateNetOnly} className="text-[10px] px-2 py-1 rounded bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-50" disabled={!scramble.trim()}>
-                    展开图
-                  </button>
-                  <button onClick={() => handleStageSolve('cross')} className={cn('text-[10px] px-2 py-1 rounded disabled:opacity-50', stageActive === 'cross' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200')} disabled={stageViews.cross.status === 'loading' || !scramble.trim()}>
-                    {stageViews.cross.status === 'loading' ? 'Cross 计算中...' : 'Cross'}
-                  </button>
-                  <button onClick={() => handleStageSolve('f2l')} className={cn('text-[10px] px-2 py-1 rounded disabled:opacity-50', stageActive === 'f2l' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200')} disabled={stageViews.f2l.status === 'loading' || !scramble.trim()}>
-                    {stageViews.f2l.status === 'loading' ? 'F2L 计算中...' : 'F2L'}
-                  </button>
-                  <button onClick={() => handleStageSolve('oll')} className={cn('text-[10px] px-2 py-1 rounded disabled:opacity-50', stageActive === 'oll' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200')} disabled={stageViews.oll.status === 'loading' || !scramble.trim()}>
-                    {stageViews.oll.status === 'loading' ? 'OLL 计算中...' : 'OLL'}
-                  </button>
-                  <button onClick={() => handleStageSolve('pll')} className={cn('text-[10px] px-2 py-1 rounded disabled:opacity-50', stageActive === 'pll' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200')} disabled={stageViews.pll.status === 'loading' || !scramble.trim()}>
-                    {stageViews.pll.status === 'loading' ? 'PLL 计算中...' : 'PLL'}
-                  </button>
-                </div>
-                {stageError && <p className="mt-2 text-[11px] text-red-600">{stageError}</p>}
               </div>
 
-              {stageRequested.length > 0 && (
+              <div className="grid grid-cols-2 gap-2">
+                <button onClick={generateNetOnly} className="text-[11px] px-2 py-2 rounded bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-50" disabled={!scramble.trim()}>
+                  1) 生成展开图（先核对打乱）
+                </button>
+                <button onClick={handleSolveSteps} className="text-[11px] px-2 py-2 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50" disabled={solvingSteps || !scramble.trim()}>
+                  {solvingSteps ? '2) 分步求解中...' : '2) 生成完整分步解法'}
+                </button>
+              </div>
+              {stageError && <p className="text-[11px] text-red-600">{stageError}</p>}
+
+              {hasStageResult && (
                 <div className="space-y-2">
-                  {stageRequested.map((stage) => {
+                  {STAGE_ORDER.map((stage) => {
                     const view = stageViews[stage]
-                    const showLoading = view.status === 'loading'
                     return (
                       <div key={stage} className="text-[11px] bg-slate-50 border border-slate-200 rounded p-2">
                         <div className="text-slate-600 mb-1 font-semibold">{STAGE_LABEL[stage]} 阶段</div>
-                        {showLoading && <div className="text-slate-500">计算中，请稍候...</div>}
-                        {!showLoading && (
-                          <>
-                            <div className="text-slate-500 mb-1">公式:</div>
-                            <code className="font-cube text-slate-800 break-all">{view.moves || view.note || '暂无公式'}</code>
-                            {stage === 'f2l' && (
-                              <div className="mt-2 space-y-1">
-                                <div className="text-slate-500">F2L 分槽（按实际求解顺序）:</div>
-                                {(view.slots || []).map((slot) => (
-                                  <div key={slot.slot} className="text-slate-700">
-                                    {slot.slot}: <span className="font-cube">{slot.moves || '该槽位已完成（0 步）'}</span>
-                                  </div>
-                                ))}
+                        <div className="text-slate-500 mb-1">公式:</div>
+                        <code className="font-cube text-slate-800 break-all">{view.moves || view.note || '暂无公式'}</code>
+                        {stage === 'f2l' && (
+                          <div className="mt-2 space-y-1">
+                            <div className="text-slate-500">F2L 分槽（按实际求解顺序）:</div>
+                            {(view.slots || []).map((slot, idx) => (
+                              <div key={`${slot.slot}-${idx}`} className="text-slate-700">
+                                {slot.slot}: <span className="font-cube">{slot.moves || '该槽位已完成（0 步）'}</span>
                               </div>
-                            )}
-                          </>
+                            ))}
+                          </div>
                         )}
                       </div>
                     )
                   })}
-                </div>
-              )}
 
-              {summaryReady && (
-                <div className="text-[11px] bg-green-50 border border-green-200 rounded p-2">
-                  <div className="font-semibold text-green-700 mb-1">分步汇总（Cross + F2L + OLL + PLL）</div>
-                  <div className="mb-1 text-slate-700">总步数: {stageSummarySteps}</div>
-                  <code className="font-cube text-slate-800 break-all">{stageSummaryFormula || '无汇总公式'}</code>
+                  <div className="text-[11px] bg-green-50 border border-green-200 rounded p-2">
+                    <div className="font-semibold text-green-700 mb-1">分步汇总（Cross + F2L + OLL + PLL）</div>
+                    <div className="mb-1 text-slate-700">总步数: {stageSummarySteps}</div>
+                    <code className="font-cube text-slate-800 break-all">{stageSummaryFormula || '无汇总公式'}</code>
+                  </div>
                 </div>
               )}
 
@@ -608,7 +545,7 @@ export default function AnalyzePage() {
                     onInput={handleKeyboardInput}
                     onBackspace={handleBackspace}
                     onClear={handleClear}
-                    onSpace={handleSpace}
+                    onSpace={() => handleKeyboardInput(' ')}
                     value={keyboardTarget === 'scramble' ? scramble : solution}
                   />
                 )}
@@ -630,7 +567,53 @@ export default function AnalyzePage() {
               </CardHeader>
               <CardContent className="pt-3">
                 {analyzeError && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-3 mb-3">{analyzeError}</div>}
-                <pre className="text-xs whitespace-pre-wrap bg-slate-50 p-3 rounded border border-slate-200">{JSON.stringify(result, null, 2)}</pre>
+                {!analyzeError && (
+                  <div className="space-y-3">
+                    {resultWarning && (
+                      <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-3">
+                        {resultWarning}
+                      </div>
+                    )}
+                    {resultDegraded && (
+                      <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-3">
+                        参考解未通过验证，本次结果按降级模式展示，请重试同一打乱或更换打乱再分析。
+                      </div>
+                    )}
+
+                    {summary && (
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        <div className="bg-slate-50 border border-slate-200 rounded p-2">
+                          <p className="text-[10px] text-slate-500">你的步数</p>
+                          <p className="text-sm font-semibold text-slate-800">{summary.userSteps ?? '-'}</p>
+                        </div>
+                        <div className="bg-slate-50 border border-slate-200 rounded p-2">
+                          <p className="text-[10px] text-slate-500">参考步数</p>
+                          <p className="text-sm font-semibold text-slate-800">{summary.optimalSteps ?? '-'}</p>
+                        </div>
+                        <div className="bg-slate-50 border border-slate-200 rounded p-2">
+                          <p className="text-[10px] text-slate-500">效率</p>
+                          <p className="text-sm font-semibold text-slate-800">{summary.efficiency ?? '-'}%</p>
+                        </div>
+                        <div className="bg-slate-50 border border-slate-200 rounded p-2">
+                          <p className="text-[10px] text-slate-500">等级</p>
+                          <p className="text-sm font-semibold text-slate-800">{String(summary.level || '-')}</p>
+                        </div>
+                      </div>
+                    )}
+
+                    {topRecommendations.length > 0 && (
+                      <div className="space-y-2">
+                        <p className="text-xs font-semibold text-slate-700">训练建议（Top 3）</p>
+                        {topRecommendations.map((r: AnyObj, idx: number) => (
+                          <div key={`${r.title || 'rec'}-${idx}`} className="bg-slate-50 border border-slate-200 rounded p-2">
+                            <p className="text-xs font-semibold text-slate-800">{idx + 1}. {r.title || '建议'}</p>
+                            <p className="text-[11px] text-slate-600">{r.currentStatus || r.estimatedImprovement || ''}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}
@@ -683,13 +666,7 @@ export default function AnalyzePage() {
         </div>
       </div>
 
-      <input
-        ref={imageInputRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={handleImageUpload}
-      />
+      <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
     </div>
   )
 }

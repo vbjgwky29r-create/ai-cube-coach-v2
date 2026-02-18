@@ -636,8 +636,10 @@ export async function POST(req: NextRequest) {
           : 'Degraded mode: reference CFOP is not verified; stage comparison is skipped for this request.',
       },
       warning: cfopVerified ? undefined : 'Reference CFOP verification failed. Returned degraded analyze result.',
-      degraded: !!result.degraded,
-      degradedReason: result.degradedReason,
+      degraded: !cfopVerified || !!result.degraded,
+      degradedReason: !cfopVerified
+        ? (result.degradedReason || 'cfop_reference_not_verified')
+        : result.degradedReason,
       cached: false,
     }
 
