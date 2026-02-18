@@ -6,18 +6,13 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import Cube from 'cubejs'
 import {
   applyScramble,
-  checkCrossIntact,
   createSolvedCubeState,
-  type CubeState,
-  solveCross,
-  solveF2L,
+  isCrossComplete,
   isF2LComplete,
-} from '@/lib/cube/cfop-solver-cubejs'
-import { solveF2LWithPdb } from '@/lib/cube/f2l-pdb-solver'
-import * as permutationF2L from '@/lib/cube/f2l-solver-permutation.js'
+  solveCFOPDetailedVerified,
+} from '@/lib/cube/cfop-latest'
 
 function validateFormula(formula: string): boolean {
   if (!formula || formula.trim().length === 0) {
@@ -37,62 +32,6 @@ function normalizeFormula(formula: string): string {
     .replace(/\s+/g, ' ')
     // 只将大写基础转体（R/L/U/D/F/B）标准化，保留宽转和中层转的小写
     .replace(/\b([URFDLB])\b/g, (match) => match.toUpperCase())
-}
-
-type SlotName = 'FR' | 'FL' | 'BL' | 'BR'
-
-function solveF2LWithPermutationHybrid(state: CubeState): {
-  success: boolean
-  solution: string
-  steps: number
-  slots: Array<{ slot: SlotName; solution: string; solved: boolean }>
-  finalState: CubeState
-  method: string
-} {
-  const solver = permutationF2L as unknown as {
-    solveF2L?: (cube: any) => {
-      solution?: string
-      slots?: Record<string, { solution?: string; success?: boolean }>
-    }
-  }
-
-  if (typeof solver.solveF2L !== 'function') {
-    return {
-      success: false,
-      solution: '',
-      steps: 0,
-      slots: [],
-      finalState: state,
-      method: 'hybrid-unavailable',
-    }
-  }
-
-  const workCube = new Cube(state.cube as Cube)
-  const raw = solver.solveF2L(workCube)
-  const solution = raw?.solution ? normalizeFormula(raw.solution) : ''
-  const finalState = solution ? state.move(solution) : state
-
-  const slotOrder: SlotName[] = ['FR', 'FL', 'BL', 'BR']
-  const slots = slotOrder.map((slot) => {
-    const slotRaw = raw?.slots?.[slot]
-    const solved = isF2LComplete(finalState) || !!slotRaw?.success
-    return {
-      slot,
-      solution: slotRaw?.solution ? normalizeFormula(slotRaw.solution) : '',
-      solved,
-    }
-  })
-
-  const success = checkCrossIntact(finalState) && isF2LComplete(finalState)
-
-  return {
-    success,
-    solution,
-    steps: solution ? solution.split(' ').filter(Boolean).length : 0,
-    slots,
-    finalState,
-    method: 'hybrid-permutation',
-  }
 }
 
 export async function POST(request: NextRequest) {
@@ -115,64 +54,36 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Cross 公式格式不正确' }, { status: 400 })
       }
     }
+    const cfop = solveCFOPDetailedVerified(normalizedScramble)
 
-    const cube = createSolvedCubeState()
-    const scrambled = applyScramble(cube, normalizedScramble)
-
-    let crossSolution = normalizedCross
-    let state = scrambled
-    if (!crossSolution) {
-      crossSolution = solveCross(scrambled)
-    }
-    if (crossSolution) {
-      state = state.move(crossSolution)
-    }
-
-    const hybrid = solveF2LWithPermutationHybrid(state)
-    let finalState = hybrid.finalState
-    let f2lMoves = hybrid.solution
-    let f2lSteps = hybrid.steps
-    let f2lSlots: any = hybrid.slots
-    let f2lMethod: string = hybrid.method
-
-    if (!hybrid.success) {
-      const pdbResult = solveF2LWithPdb(state)
-      finalState = pdbResult.solution ? state.move(pdbResult.solution) : state
-      f2lMoves = pdbResult.solution
-      f2lSteps = pdbResult.steps
-      f2lSlots = pdbResult.slots
-      f2lMethod = pdbResult.method
-
-      if (!pdbResult.success) {
-        const fallback = solveF2L(state)
-        finalState = fallback.solution ? state.move(fallback.solution) : state
-        f2lMoves = fallback.solution
-        f2lSteps = fallback.steps
-        f2lSlots = fallback.slots as any
-        f2lMethod = 'fallback-v2'
-      }
-    }
+    const afterCross = applyScramble(createSolvedCubeState(), normalizedScramble)
+    if (cfop.cross.moves) afterCross.move(cfop.cross.moves)
+    const afterF2L = applyScramble(createSolvedCubeState(), normalizedScramble)
+    if (cfop.cross.moves) afterF2L.move(cfop.cross.moves)
+    if (cfop.f2l.moves) afterF2L.move(cfop.f2l.moves)
 
     return NextResponse.json({
       success: true,
       scramble: normalizedScramble,
       cross: {
-        moves: crossSolution,
-        steps: crossSolution ? crossSolution.split(' ').filter(Boolean).length : 0,
-        intact: checkCrossIntact(finalState),
+        moves: cfop.cross.moves,
+        steps: cfop.cross.steps,
+        intact: isCrossComplete(afterCross),
       },
       f2l: {
-        moves: f2lMoves,
-        steps: f2lSteps,
-        slots: f2lSlots,
-        method: f2lMethod,
-        complete: isF2LComplete(finalState),
+        moves: cfop.f2l.moves,
+        steps: cfop.f2l.steps,
+        slots: cfop.f2l.slots,
+        method: 'cfop-latest',
+        complete: isF2LComplete(afterF2L),
       },
+      note: normalizedCross ? 'cross 参数已弃用；当前统一使用 cfop-latest 阶段求解结果。' : undefined,
     })
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('[F2L Solve API] Error:', error)
+    const message = error instanceof Error ? error.message : 'F2L 求解失败'
     return NextResponse.json(
-      { error: error.message || 'F2L 求解失败', success: false },
+      { error: message, success: false },
       { status: 500 }
     )
   }
@@ -182,7 +93,7 @@ export async function GET() {
   return NextResponse.json({
     endpoint: '/api/cube/f2l-solve',
     method: 'POST',
-    description: 'F2L 求解接口（可选带入 Cross 公式）',
+    description: 'F2L 求解接口（统一使用 cfop-latest 的 Cross/F2L 分段结果）',
     parameters: {
       scramble: {
         type: 'string',
@@ -191,13 +102,13 @@ export async function GET() {
       },
       cross: {
         type: 'string',
-        description: '可选 Cross 公式，若不提供则自动求解',
+        description: '已弃用，保留兼容入参',
       },
     },
     response: {
       success: 'boolean',
-      cross: 'Cross 解法与完整性',
-      f2l: 'F2L 解法与完成情况',
+      cross: 'cfop-latest 的 Cross 结果与完整性',
+      f2l: 'cfop-latest 的 F2L 结果与完成情况',
     },
   })
 }
