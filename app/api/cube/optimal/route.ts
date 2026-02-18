@@ -118,6 +118,7 @@ export async function GET(req: NextRequest) {
   // 璁よ瘉鍜岄€熺巼闄愬埗妫€鏌?
   const headers = req.headers
   const rateKey = getRateLimitKey(headers)
+  const clientIp = headers.get('x-forwarded-for') || headers.get('x-real-ip') || 'unknown'
 
   if (!checkRateLimit(rateKey)) {
     logger.warn('Rate limit exceeded', { requestId, rateKey, endpoint: 'optimal' })
@@ -129,7 +130,7 @@ export async function GET(req: NextRequest) {
 
   const authResult = checkAuth(headers)
   if (!authResult.valid) {
-    logger.warn('Authentication failed', { requestId, ip, endpoint: 'optimal', error: authResult.error })
+    logger.warn('Authentication failed', { requestId, ip: clientIp, endpoint: 'optimal', error: authResult.error })
     return NextResponse.json(
       { error: authResult.error || '璁よ瘉澶辫触' },
       { status: 401 }
@@ -159,6 +160,7 @@ export async function POST(req: NextRequest) {
     // 璁よ瘉鍜岄€熺巼闄愬埗妫€鏌?
     const headers = req.headers
     const rateKey = getRateLimitKey(headers)
+    const clientIp = headers.get('x-forwarded-for') || headers.get('x-real-ip') || 'unknown'
 
     if (!checkRateLimit(rateKey)) {
       logger.warn('Rate limit exceeded', { requestId, rateKey, endpoint: 'optimal' })
@@ -170,7 +172,7 @@ export async function POST(req: NextRequest) {
 
     const authResult = checkAuth(headers)
     if (!authResult.valid) {
-      logger.warn('Authentication failed', { requestId, ip, endpoint: 'optimal', error: authResult.error })
+      logger.warn('Authentication failed', { requestId, ip: clientIp, endpoint: 'optimal', error: authResult.error })
       return NextResponse.json(
         { error: authResult.error || '璁よ瘉澶辫触' },
         { status: 401 }
