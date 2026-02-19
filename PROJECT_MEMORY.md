@@ -1,6 +1,6 @@
 # PROJECT MEMORY (Persistent Rules)
 
-Last Updated: 2026-02-15
+Last Updated: 2026-02-19
 Owner: Product requirements (user-confirmed)
 
 ## 1) Product Goal (Core)
@@ -71,3 +71,21 @@ Owner: Product requirements (user-confirmed)
 ## 8) API Solver Source of Truth
 - All API endpoints that need CFOP reference (`/api/cube/analyze`, `/api/cube/cfop-solve`, `/api/cube/optimal`, `/api/cube/f2l-solve`) must call the latest fixed solver via `lib/cube/cfop-latest.ts`.
 - Do not route production coaching logic through legacy solvers (`cfop-solver-cubejs.ts`, versioned/experimental solver files, or ad-hoc script solvers).
+
+## 9) Analyze Product Flow (Locked, 2026-02-19)
+- OCR scope is `scramble only`.
+- OCR must not provide/guess user solution.
+- Analyze input policy:
+  - `scramble`: manual input or OCR result.
+  - `solution`: manual user input is optional.
+  - If user solution is empty, system must analyze with generated reference solution for the same scramble.
+- UI behavior after OCR success:
+  - Update scramble.
+  - Clear user solution.
+  - Clear stale analysis/stage/reference outputs from previous scramble.
+- Error messaging policy:
+  - For invalid user solution, do not blame rotations only.
+  - Must include multiple possible causes: missing/extra moves, notation typo, omitted rotations.
+- Coaching output policy:
+  - Do not output problem-only items.
+  - Every recommendation must include `problem + improvement plan`.
