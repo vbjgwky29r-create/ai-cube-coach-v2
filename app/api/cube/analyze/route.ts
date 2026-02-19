@@ -10,13 +10,13 @@ import {
 } from '@/lib/cube/cfop-latest'
 import { logger, generateRequestId } from '@/lib/utils/logger'
 
-// 简单的速率限制存储（生产环境应使用 Redis 等）
+// 绠€鍗曠殑閫熺巼闄愬埗瀛樺偍锛堢敓浜х幆澧冨簲浣跨敤 Redis 绛夛級
 const ipLimitMap = new Map<string, { count: number; resetTime: number }>()
 
-// 限制配置
+// 闄愬埗閰嶇疆
 const RATE_LIMIT = {
-  maxRequests: 10,        // 每分钟最多请求数
-  windowMs: 60 * 1000,    // 1分钟窗口
+  maxRequests: 10,        // 姣忓垎閽熸渶澶氳姹傛暟
+  windowMs: 60 * 1000,    // 1鍒嗛挓绐楀彛
 }
 const ANALYZE_CACHE_TTL_MS = 2 * 60 * 1000
 const CFOP_REF_CACHE_TTL_MS = 5 * 60 * 1000
@@ -24,29 +24,29 @@ const analyzeResponseCache = new Map<string, { expiresAt: number; payload: unkno
 const cfopReferenceCache = new Map<string, { expiresAt: number; payload: unknown }>()
 
 const INPUT_LIMITS = {
-  maxScrambleLength: 500,   // 打乱公式最大长度
-  maxSolutionLength: 2000,  // 解法最大长度
-  maxMoveCount: 200,        // 最大动作数
+  maxScrambleLength: 500,   // 鎵撲贡鍏紡鏈€澶ч暱搴?
+  maxSolutionLength: 2000,  // 瑙ｆ硶鏈€澶ч暱搴?
+  maxMoveCount: 200,        // 鏈€澶у姩浣滄暟
 }
 
-// API 密钥配置（从环境变量读取）
+// API 瀵嗛挜閰嶇疆锛堜粠鐜鍙橀噺璇诲彇锛?
 const API_KEYS = (process.env.API_KEYS || '').split(',').filter(k => k.length > 0)
 const SKIP_AUTH_FOR_DEMO = process.env.NODE_ENV !== 'production'
 
 function checkAuth(headers: Headers): { valid: boolean; error?: string } {
-  // 开发环境跳过认证
+  // 寮€鍙戠幆澧冭烦杩囪璇?
   if (SKIP_AUTH_FOR_DEMO) {
     return { valid: true }
   }
 
-  // 如果配置了 API 密钥，检查请求头
+  // 濡傛灉閰嶇疆浜?API 瀵嗛挜锛屾鏌ヨ姹傚ご
   if (API_KEYS.length > 0) {
     const apiKey = headers.get('x-api-key') || headers.get('authorization')?.replace('Bearer ', '')
     if (!apiKey) {
-      return { valid: false, error: '缺少 API 密钥' }
+      return { valid: false, error: '缂哄皯 API 瀵嗛挜' }
     }
     if (!API_KEYS.includes(apiKey)) {
-      return { valid: false, error: '无效的 API 密钥' }
+      return { valid: false, error: '鏃犳晥鐨?API 瀵嗛挜' }
     }
   }
 
@@ -58,7 +58,7 @@ function checkRateLimit(ip: string): boolean {
   const record = ipLimitMap.get(ip)
 
   if (!record || now > record.resetTime) {
-    // 新窗口
+    // 鏂扮獥鍙?
     ipLimitMap.set(ip, {
       count: 1,
       resetTime: now + RATE_LIMIT.windowMs,
@@ -104,51 +104,54 @@ function setCachedValue(
   })
 }
 
-function validateInput(scramble: string, solution: string): { valid: boolean; error?: string } {
-  // 长度检查
+function validateInput(scramble: string, solution?: string): { valid: boolean; error?: string } {
+  // 闀垮害妫€鏌?
   if (scramble.length > INPUT_LIMITS.maxScrambleLength) {
-    return { valid: false, error: `打乱公式过长，最大 ${INPUT_LIMITS.maxScrambleLength} 字符` }
+    return { valid: false, error: `鎵撲贡鍏紡杩囬暱锛屾渶澶?${INPUT_LIMITS.maxScrambleLength} 瀛楃` }
   }
-  if (solution.length > INPUT_LIMITS.maxSolutionLength) {
-    return { valid: false, error: `解法过长，最大 ${INPUT_LIMITS.maxSolutionLength} 字符` }
+  if ((solution || '').length > INPUT_LIMITS.maxSolutionLength) {
+    return { valid: false, error: `瑙ｆ硶杩囬暱锛屾渶澶?${INPUT_LIMITS.maxSolutionLength} 瀛楃` }
   }
 
-  // 使用解析器计算实际步数（支持无空格公式如 RRULLBFF）
+  // 浣跨敤瑙ｆ瀽鍣ㄨ绠楀疄闄呮鏁帮紙鏀寔鏃犵┖鏍煎叕寮忓 RRULLBFF锛?
   const scrambleParsed = parseFormula(scramble)
-  const solutionParsed = parseFormula(solution)
+  const solutionParsed = solution ? parseFormula(solution) : null
 
   if (!scrambleParsed.isValid) {
-    return { valid: false, error: `打乱公式解析失败: ${scrambleParsed.errors[0]}` }
+    return { valid: false, error: `鎵撲贡鍏紡瑙ｆ瀽澶辫触: ${scrambleParsed.errors[0]}` }
   }
-  if (!solutionParsed.isValid) {
-    return { valid: false, error: `解法解析失败: ${solutionParsed.errors[0]}` }
+  if (solutionParsed && !solutionParsed.isValid) {
+    return { valid: false, error: `瑙ｆ硶瑙ｆ瀽澶辫触: ${solutionParsed.errors[0]}` }
   }
 
   const scrambleMoves = scrambleParsed.count
-  const solutionMoves = solutionParsed.count
+  const solutionMoves = solutionParsed?.count || 0
 
   if (scrambleMoves > INPUT_LIMITS.maxMoveCount) {
-    return { valid: false, error: `打乱动作过多，最大 ${INPUT_LIMITS.maxMoveCount} 步` }
+    return { valid: false, error: 'Scramble move count exceeds limit' }
   }
-  if (solutionMoves > INPUT_LIMITS.maxMoveCount) {
-    return { valid: false, error: `解法动作过多，最大 ${INPUT_LIMITS.maxMoveCount} 步` }
+  if (solutionParsed && solutionMoves > INPUT_LIMITS.maxMoveCount) {
+    return { valid: false, error: 'Solution move count exceeds limit' }
   }
 
-  // 字符集检查
+  // 瀛楃闆嗘鏌?
   const validChars = /^[RLUDFBrludfbxyzMESmes\s'2()0-9]+$/
   if (!validChars.test(scramble)) {
-    return { valid: false, error: '打乱公式包含非法字符' }
+    return { valid: false, error: '鎵撲贡鍏紡鍖呭惈闈炴硶瀛楃' }
   }
-  if (!validChars.test(solution)) {
-    return { valid: false, error: '解法包含非法字符' }
+  if (solution && !validChars.test(solution)) {
+    return { valid: false, error: '瑙ｆ硶鍖呭惈闈炴硶瀛楃' }
   }
 
   return { valid: true }
 }
 
 function analyzeUserStages(scramble: string, userSolution: string) {
-  const parsed = parseFormula(userSolution)
-  const moves = parsed.moves.map((m: any) => m.notation || m.move || '').filter(Boolean)
+  const moves = userSolution
+    .replace(/[鈥欌€榒]/g, "'")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
   let state = applyScrambleCFOP(createSolvedCubeState(), scramble)
 
   let crossAt = -1
@@ -273,181 +276,104 @@ function buildCoachRecommendations(params: {
   cfopTotal: number
 }): CoachRecommendation[] {
   const recommendations: CoachRecommendation[] = []
-  const weights: Record<StageKey, number> = { cross: 1.1, f2l: 1.6, oll: 0.9, pll: 1.2 }
-  const stages: StageKey[] = ['cross', 'f2l', 'oll', 'pll']
-  const scored = stages
-    .map((stage) => {
-      const user = params.userStages[stage] || 0
-      const ref = params.cfopStages[stage] || 0
-      const gap = user - ref
-      const ratio = ref > 0 ? gap / ref : 0
-      return {
-        stage,
-        user,
-        ref,
-        gap,
-        score: gap > 0 ? gap * weights[stage] + ratio * 4 : 0,
-      }
-    })
-    .sort((a, b) => b.score - a.score)
-
-  let priority = 1
+  const stageKeys: StageKey[] = ['cross', 'f2l', 'oll', 'pll']
+  const gaps: Array<{ stage: StageKey; gap: number }> = stageKeys.map((stage) => ({
+    stage,
+    gap: (params.userStages[stage] || 0) - (params.cfopStages[stage] || 0),
+  }))
+  const sorted = gaps.filter((g) => g.gap > 0).sort((a, b) => b.gap - a.gap)
   if (!params.userSolved) {
     recommendations.push({
-      priority: priority++,
-      title: '先把完整还原成功率拉到 100%',
+      priority: 1,
+      title: 'Stabilize full solve completion',
       area: 'Accuracy',
-      currentStatus: '当前复盘检测到存在未完整还原的情况',
-      targetStatus: '连续 20 次都能完整还原，再压缩步数',
-      estimatedImprovement: '先消除 DNF 风险',
+      currentStatus: 'Provided solution does not fully solve the cube.',
+      targetStatus: 'Reach 100% solved replay first, then optimize steps.',
+      estimatedImprovement: 'Remove DNF risk',
       effort: 'medium',
       actionItems: [
-        '每次复盘先做分段验收：Cross -> F2L -> OLL -> PLL',
-        '每个阶段结束都停一下做口头检查，避免错误滚入下一阶段',
-        'PLL 只执行识别到的单公式，避免临场拼接多段公式',
+        'Enter all moves in exact order.',
+        'Include cube rotations x/y/z if used.',
+        'Replay once before submitting for analysis.',
       ],
       resourceLinks: resourcesForArea('Overall'),
-      timeToSeeResults: '2-3 天',
+      timeToSeeResults: '2-3 days',
     })
   }
-
-  for (const item of scored.slice(0, 3)) {
-    if (item.gap <= 0) continue
-    if (item.stage === 'cross') {
-      recommendations.push({
-        priority: priority++,
-        title: 'Cross 检查与预判优化',
-        area: 'Cross',
-        currentStatus: `${item.user} 步（参考 ${item.ref} 步）`,
-        targetStatus: `稳定压到 ${item.ref + 1} 步以内`,
-        estimatedImprovement: `可节省约 ${item.gap} 步`,
-        effort: 'low',
-        actionItems: [
-          '观察阶段优先规划两条边，减少中途停顿',
-          '避免无效 U 调整与同面往返动作',
-          '训练“第一条边落位后第二条边不断拍”节奏',
-        ],
-        resourceLinks: resourcesForArea('Cross'),
-        timeToSeeResults: '3-5 天',
-      })
-    }
-    if (item.stage === 'f2l') {
-      recommendations.push({
-        priority: priority++,
-        title: 'F2L 走“转标态 -> 入槽”',
-        area: 'F2L',
-        currentStatus: `${item.user} 步（参考 ${item.ref} 步）`,
-        targetStatus: `先压到 ${item.ref + 3} 步，再追 ${item.ref + 1} 步`,
-        estimatedImprovement: `可节省约 ${item.gap} 步（最大瓶颈）`,
-        effort: 'high',
-        actionItems: [
-          '每次先评估四槽“转标态成本”，再决定先做哪个槽',
-          '前三槽允许适度 y 转体，减少 B/B\' 硬拧',
-          '一旦某槽完成，后续槽位不再破坏已完成槽',
-        ],
-        resourceLinks: resourcesForArea('F2L'),
-        timeToSeeResults: '1-2 周',
-      })
-    }
-    if (item.stage === 'oll') {
-      recommendations.push({
-        priority: priority++,
-        title: 'OLL 识别与执行流畅度',
-        area: 'OLL',
-        currentStatus: `${item.user} 步（参考 ${item.ref} 步）`,
-        targetStatus: `稳定在 ${item.ref + 1} 步以内`,
-        estimatedImprovement: `可节省约 ${item.gap} 步`,
-        effort: 'medium',
-        actionItems: [
-          '先锁定模式再出手，减少试错性 U 调整',
-          '高频 OLL 单独做 20 次连发训练',
-          '用同一套指法保持出手一致性',
-        ],
-        resourceLinks: resourcesForArea('OLL'),
-        timeToSeeResults: '5-7 天',
-      })
-    }
-    if (item.stage === 'pll') {
-      recommendations.push({
-        priority: priority++,
-        title: 'PLL 按形态识别单公式',
-        area: 'PLL',
-        currentStatus: `${item.user} 步（参考 ${item.ref} 步）`,
-        targetStatus: `稳定在 ${item.ref + 1} 步以内`,
-        estimatedImprovement: `可节省约 ${item.gap} 步`,
-        effort: 'medium',
-        actionItems: [
-          '先识别是三棱换/四棱换/角棱混换，再执行对应单公式',
-          '避免多段 fallback 链式执行',
-          '做 AUF + 单 PLL + AUF 的节奏训练',
-        ],
-        resourceLinks: resourcesForArea('PLL'),
-        timeToSeeResults: '4-7 天',
-      })
-    }
-  }
-
-  const totalGap = params.userTotal - params.cfopTotal
-  if (totalGap > 0 && recommendations.length < 3) {
+  let priority = recommendations.length + 1
+  for (const item of sorted.slice(0, 3)) {
+    const area = item.stage.toUpperCase()
     recommendations.push({
-      priority: priority,
-      title: '总体步数压缩',
-      area: 'Overall',
-      currentStatus: `${params.userTotal} 步（参考 ${params.cfopTotal} 步）`,
-      targetStatus: `先达到 ${params.cfopTotal + 3} 步以内`,
-      estimatedImprovement: `可节省约 ${totalGap} 步`,
-      effort: 'medium',
+      priority: priority++,
+      title: `${area} has avoidable overhead`,
+      area,
+      currentStatus: `${params.userStages[item.stage]} steps vs reference ${params.cfopStages[item.stage]} steps`,
+      targetStatus: `Reduce to <= ${params.cfopStages[item.stage] + 1} steps`,
+      estimatedImprovement: `Save about ${item.gap} steps`,
+      effort: item.stage === 'f2l' ? 'high' : 'medium',
       actionItems: [
-        '先保证每阶段稳定，再做跨阶段提速',
-        '复盘每把中“最长停顿点”并单点修复',
-        '每 10 把统计一次阶段步数均值',
+        `Drill ${area} recognition and execution.`,
+        'Reduce pauses and unnecessary rotations.',
+        'Use stage-specific algorithm review resources.',
       ],
-      resourceLinks: resourcesForArea('Overall'),
-      timeToSeeResults: '1 周',
+      resourceLinks: resourcesForArea(area),
+      timeToSeeResults: '3-7 days',
     })
   }
-
+  if (recommendations.length === 0) {
+    recommendations.push({
+      priority: 1,
+      title: 'Maintain current efficiency',
+      area: 'Overall',
+      currentStatus: `${params.userTotal} steps vs reference ${params.cfopTotal} steps`,
+      targetStatus: 'Keep consistency and improve turning quality',
+      estimatedImprovement: 'Small gains via execution stability',
+      effort: 'low',
+      actionItems: [
+        'Keep warmup and rhythm stable.',
+        'Focus on lookahead continuity.',
+      ],
+      resourceLinks: resourcesForArea('Overall'),
+      timeToSeeResults: '1 week',
+    })
+  }
   return recommendations.slice(0, 5)
 }
-
 function buildWeeklyPlan(recommendations: CoachRecommendation[]) {
   const primary = recommendations[0]
   const secondary = recommendations[1] || recommendations[0]
   return [
-    { day: 1, focus: primary?.area || 'F2L', durationMinutes: 30, goal: '先做低速准确率训练，确保阶段不出错' },
-    { day: 2, focus: primary?.area || 'F2L', durationMinutes: 30, goal: '固定一套动作流程，减少停顿' },
-    { day: 3, focus: secondary?.area || 'Cross', durationMinutes: 25, goal: '补齐第二瓶颈阶段识别与执行' },
-    { day: 4, focus: primary?.area || 'F2L', durationMinutes: 30, goal: '做分段计时，压缩阶段步数' },
-    { day: 5, focus: 'PLL/OLL', durationMinutes: 20, goal: '形态识别 + 单公式一把过' },
-    { day: 6, focus: 'Full Solve', durationMinutes: 35, goal: '整把复盘并记录阶段步数' },
-    { day: 7, focus: 'Review', durationMinutes: 20, goal: '对比本周首日，确认步数与稳定性提升' },
+    { day: 1, focus: primary?.area || 'F2L', durationMinutes: 30, goal: 'Slow and accurate drill for key stage' },
+    { day: 2, focus: primary?.area || 'F2L', durationMinutes: 30, goal: 'Case recognition + smooth execution' },
+    { day: 3, focus: secondary?.area || 'Cross', durationMinutes: 25, goal: 'Target second bottleneck stage' },
+    { day: 4, focus: primary?.area || 'F2L', durationMinutes: 30, goal: 'Apply improvements in full solves' },
+    { day: 5, focus: 'OLL/PLL', durationMinutes: 20, goal: 'Review core last-layer cases' },
+    { day: 6, focus: 'Full Solve', durationMinutes: 35, goal: 'Track step count and consistency' },
+    { day: 7, focus: 'Review', durationMinutes: 20, goal: 'Summarize progress and set next targets' },
   ]
-}
-
-export async function POST(req: NextRequest) {
+}export async function POST(req: NextRequest) {
   const requestId = generateRequestId()
   const startTime = Date.now()
 
   try {
-    // 获取IP地址 (Next.js 15+ 使用 headers 获取)
+    // 鑾峰彇IP鍦板潃 (Next.js 15+ 浣跨敤 headers 鑾峰彇)
     const headers = req.headers
     const rateKey = getRateLimitKey(headers)
 
-    // 速率限制检查
     if (!checkRateLimit(rateKey)) {
       logger.warn('Rate limit exceeded', { requestId, rateKey })
       return NextResponse.json(
-        { error: '请求过于频繁，请稍后再试' },
+        { error: '璇锋眰杩囦簬棰戠箒锛岃绋嶅悗鍐嶈瘯' },
         { status: 429 }
       )
     }
 
-    // API 认证检查
+    // API 璁よ瘉妫€鏌?
     const authResult = checkAuth(headers)
     if (!authResult.valid) {
       logger.warn('Authentication failed', { requestId, rateKey, error: authResult.error })
       return NextResponse.json(
-        { error: authResult.error || '认证失败' },
+        { error: authResult.error || '璁よ瘉澶辫触' },
         { status: 401 }
       )
     }
@@ -455,7 +381,9 @@ export async function POST(req: NextRequest) {
     const { scramble, solution } = await req.json()
     const trimmedScramble = String(scramble || '').trim()
     const trimmedSolution = String(solution || '').trim()
-    const cacheKey = `${trimmedScramble}||${trimmedSolution}`
+    const hasUserSolution = trimmedSolution.length > 0
+    const effectiveSolutionMarker = hasUserSolution ? trimmedSolution : '__CFOP_REFERENCE__'
+    const cacheKey = `${trimmedScramble}||${effectiveSolutionMarker}`
 
     const cachedResponse = getCachedValue(analyzeResponseCache, cacheKey)
     if (cachedResponse) {
@@ -465,17 +393,17 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    // 验证输入存在
-    if (!trimmedScramble || !trimmedSolution) {
+    // 楠岃瘉杈撳叆瀛樺湪
+    if (!trimmedScramble) {
       logger.api('POST', '/api/cube/analyze', 400, Date.now() - startTime, { requestId, error: 'Missing parameters' })
       return NextResponse.json(
-        { error: '缺少必要参数: scramble 和 solution' },
+        { error: 'Missing required parameter: scramble' },
         { status: 400 }
       )
     }
 
-    // 验证输入内容
-    const validation = validateInput(trimmedScramble, trimmedSolution)
+    // 楠岃瘉杈撳叆鍐呭
+    const validation = validateInput(trimmedScramble, hasUserSolution ? trimmedSolution : undefined)
     if (!validation.valid) {
       logger.api('POST', '/api/cube/analyze', 400, Date.now() - startTime, { requestId, error: validation.error })
       return NextResponse.json(
@@ -484,8 +412,15 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const userStageInfo = analyzeUserStages(trimmedScramble, trimmedSolution)
-    if (!userStageInfo.userSolved) {
+    const userStageInfo = hasUserSolution
+      ? analyzeUserStages(trimmedScramble, trimmedSolution)
+      : {
+          userSolved: true,
+          solvedAt: 0,
+          totalSteps: 0,
+          stages: { cross: 0, f2l: 0, oll: 0, pll: 0 },
+        }
+    if (hasUserSolution && !userStageInfo.userSolved) {
       logger.api('POST', '/api/cube/analyze', 400, Date.now() - startTime, {
         requestId,
         error: 'user_solution_not_solved',
@@ -493,16 +428,16 @@ export async function POST(req: NextRequest) {
       })
       return NextResponse.json(
         {
-          error: '该解法无法还原到完成状态，请先检查打乱或解法后再分析。',
+          error: 'Your solution does not solve this scramble. Check missing/extra moves, notation typos, and x/y/z rotations.',
           code: 'USER_SOLUTION_NOT_SOLVED',
           solvedAt: userStageInfo.solvedAt,
           totalSteps: userStageInfo.totalSteps,
+          tip: 'Possible causes: missing moves, extra moves, wrong notation (including 2 and prime), or omitted x/y/z rotations.',
         },
         { status: 400 }
       )
     }
-
-    // 先求解并验证完整 CFOP，再做分阶段对比建议
+    // 鍏堟眰瑙ｅ苟楠岃瘉瀹屾暣 CFOP锛屽啀鍋氬垎闃舵瀵规瘮寤鸿
     const cfopCached = getCachedValue(cfopReferenceCache, trimmedScramble) as
       | {
           cfop: ReturnType<typeof solveCFOPDetailedVerified>
@@ -539,16 +474,18 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    // 调用分析引擎（增强版）；失败时降级，不中断整条分析链路
+    // Analyze with fallback so the full pipeline remains available even if model analysis fails.
     let result: Awaited<ReturnType<typeof analyzeSolutionEnhanced>> & { degraded?: boolean; degradedReason?: string }
     try {
       result = await analyzeSolutionEnhanced({
         scramble: trimmedScramble,
-        userSolution: trimmedSolution,
+        userSolution: hasUserSolution ? trimmedSolution : cfop.solution,
       })
     } catch (analyzeError) {
-      const parsed = parseFormula(trimmedSolution)
-      const userSteps = parsed.isValid ? parsed.count : trimmedSolution.split(/\s+/).filter(Boolean).length
+      const parsed = parseFormula(hasUserSolution ? trimmedSolution : cfop.solution)
+      const userSteps = parsed.isValid
+        ? parsed.count
+        : (hasUserSolution ? trimmedSolution : cfop.solution).split(/\s+/).filter(Boolean).length
       result = {
         summary: {
           userSteps,
@@ -566,7 +503,7 @@ export async function POST(req: NextRequest) {
         tpsAnalysis: {
           userTPS: 3.2,
           level: 'intermediate',
-          levelName: '中级',
+          levelName: '涓骇',
           targetTPS: 4,
           suggestion: 'Analyze engine degraded; focus on stable execution first.',
         },
@@ -588,18 +525,20 @@ export async function POST(req: NextRequest) {
       oll: cfop.oll.steps,
       pll: cfop.pll.steps,
     }
-    const stageComparison = cfopVerified ? buildStageComparison(userStageInfo.stages, cfopStageSteps) : []
+    const stageComparison = (cfopVerified && hasUserSolution)
+      ? buildStageComparison(userStageInfo.stages, cfopStageSteps)
+      : []
     const fallbackCoachRecommendations = buildCoachRecommendations({
       userSolved: userStageInfo.userSolved,
-      userStages: userStageInfo.stages,
+      userStages: hasUserSolution ? userStageInfo.stages : cfopStageSteps,
       cfopStages: cfopStageSteps,
-      userTotal: userStageInfo.totalSteps,
+      userTotal: hasUserSolution ? userStageInfo.totalSteps : cfop.totalSteps,
       cfopTotal: cfop.totalSteps,
     })
     const modelRecommendations: CoachRecommendation[] = Array.isArray(result.prioritizedRecommendations)
       ? result.prioritizedRecommendations.map((rec: any, idx: number) => ({
           priority: Number(rec?.priority || idx + 1),
-          title: String(rec?.title || '训练建议'),
+          title: String(rec?.title || '璁粌寤鸿'),
           area: String(rec?.area || 'Overall'),
           currentStatus: String(rec?.currentStatus || ''),
           targetStatus: String(rec?.targetStatus || ''),
@@ -607,15 +546,25 @@ export async function POST(req: NextRequest) {
           effort: rec?.effort === 'high' || rec?.effort === 'medium' || rec?.effort === 'low' ? rec.effort : 'medium',
           actionItems: Array.isArray(rec?.actionItems) ? rec.actionItems.map((x: any) => String(x)) : [],
           resourceLinks: Array.isArray(rec?.resourceLinks) && rec.resourceLinks.length > 0
-            ? rec.resourceLinks.map((x: any) => ({ title: String(x?.title || '学习资源'), url: String(x?.url || '') })).filter((x: { url: string }) => Boolean(x.url))
+            ? rec.resourceLinks.map((x: any) => ({ title: String(x?.title || '瀛︿範璧勬簮'), url: String(x?.url || '') })).filter((x: { url: string }) => Boolean(x.url))
             : resourcesForArea(String(rec?.area || 'Overall')),
-          timeToSeeResults: String(rec?.timeToSeeResults || '1-2 周'),
+          timeToSeeResults: String(rec?.timeToSeeResults || '1-2 weeks'),
         }))
       : []
     const coachRecommendations = cfopVerified
       ? fallbackCoachRecommendations
       : (modelRecommendations.length > 0 ? modelRecommendations : fallbackCoachRecommendations)
     const weeklyPlan = buildWeeklyPlan(coachRecommendations)
+    const deterministicEfficiency =
+      hasUserSolution && cfop.totalSteps > 0
+        ? Math.max(0, Math.min(100, Math.round((cfop.totalSteps / Math.max(userStageInfo.totalSteps, 1)) * 100)))
+        : ('efficiency' in result.summary ? Number((result.summary as any).efficiency || 0) : 0)
+    const normalizedSummary = {
+      ...(result.summary as any),
+      userSteps: hasUserSolution ? userStageInfo.totalSteps : (result.summary as any).userSteps,
+      optimalSteps: cfop.totalSteps,
+      efficiency: deterministicEfficiency,
+    }
 
     const duration = Date.now() - startTime
     const steps = 'userSteps' in result.summary ? result.summary.userSteps : (result.summary as any).steps
@@ -623,6 +572,7 @@ export async function POST(req: NextRequest) {
 
     const payload = {
       ...result,
+      summary: normalizedSummary,
       cfopReference: {
         scramble: trimmedScramble,
         solution: cfop.solution,
@@ -634,6 +584,12 @@ export async function POST(req: NextRequest) {
       userStageReplay: userStageInfo,
       stageComparison,
       prioritizedRecommendations: coachRecommendations,
+      problemSolutionPairs: coachRecommendations.slice(0, 3).map((rec) => ({
+        problem: rec.currentStatus || rec.title,
+        solution: rec.actionItems[0] || rec.targetStatus || 'Drill this stage with deliberate, slow solves.',
+        area: rec.area,
+        priority: rec.priority,
+      })),
       coachPlan: {
         recommendations: coachRecommendations,
         weeklyPlan,
@@ -642,10 +598,10 @@ export async function POST(req: NextRequest) {
           .flatMap((r) => r.resourceLinks)
           .filter((v, i, arr) => arr.findIndex((x) => x.url === v.url) === i),
         nextSolveChecklist: [
-          '先确认 Cross 目标边位，避免盲转',
-          'F2L 每槽先看是否能低成本转标态，再入槽',
-          'OLL/PLL 先识别再执行，禁止边做边猜',
-          '每把结束记录四阶段步数，持续跟踪瓶颈',
+          'Confirm Cross target edges before turning to avoid blind moves.',
+          'For each F2L slot, prioritize low-cost pair setup before insertion.',
+          'Recognize OLL/PLL first, then execute in one clean burst.',
+          'Record per-stage move counts after each solve and track bottlenecks weekly.',
         ],
       },
       policy: {
@@ -654,6 +610,11 @@ export async function POST(req: NextRequest) {
           ? 'Stage comparison is generated only after reference CFOP full verification succeeds.'
           : 'Reference CFOP is not verified for this request; stage comparison is skipped.',
       },
+      analysisMode: hasUserSolution ? 'user_solution' : 'reference_solution',
+      inputSolutionUsed: hasUserSolution ? trimmedSolution : cfop.solution,
+      requiresRotationInputTip: hasUserSolution
+        ? 'If your source app omits rotations, manually include x/y/z in your solution.'
+        : 'No user solution provided. Analysis is based on the CFOP reference solution.',
       warning: undefined,
       degraded: !!result.degraded,
       degradedReason: result.degradedReason,
@@ -670,16 +631,18 @@ export async function POST(req: NextRequest) {
       error: e instanceof Error ? { message: e.message, stack: e.stack } : String(e)
     })
     return NextResponse.json(
-      { error: '分析失败，请稍后重试' },
+      { error: '鍒嗘瀽澶辫触锛岃绋嶅悗閲嶈瘯' },
       { status: 500 }
     )
   }
 }
 
-// GET endpoint 用于测试
+// GET endpoint 鐢ㄤ簬娴嬭瘯
 export async function GET() {
   return NextResponse.json({
     message: 'Cube analysis API is ready',
     version: '1.0.0',
   })
 }
+
+

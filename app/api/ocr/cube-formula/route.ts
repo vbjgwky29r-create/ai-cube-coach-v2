@@ -1,10 +1,11 @@
 /**
- * 魔方公式 OCR 识别 API - 专业级版本
- * 使用火山引擎豆包 API 识别魔方星球截图中的公式
- * 提供专业级分析和教练建议
+ * 榄旀柟鍏紡 OCR 璇嗗埆 API - 涓撲笟绾х増鏈?
+ * 浣跨敤鐏北寮曟搸璞嗗寘 API 璇嗗埆榄旀柟鏄熺悆鎴浘涓殑鍏紡
+ * 鎻愪緵涓撲笟绾у垎鏋愬拰鏁欑粌寤鸿
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { applyScramble, createSolvedCubeState } from '@/lib/cube/cfop-latest'
 
 export const maxDuration = 60
 
@@ -36,230 +37,386 @@ async function requestVolcengineWithRetry(url: string, init: RequestInit, attemp
   throw lastError instanceof Error ? lastError : new Error('upstream request failed')
 }
 
-/**
- * 后处理：修正常见的 OCR 识别错误
- */
-function postProcessFormula(text: string): string {
-  let result = text
-  
-  // 移除多余的空格和换行
-  result = result.replace(/\s+/g, ' ').trim()
-  
-  // 修正常见错误
-  // 1. 将 ' 的变体统一为标准的 '
-  result = result.replace(/[''`´]/g, "'")
-  
-  // 2. 确保数字 2 正确（有时被识别为其他字符）
-  result = result.replace(/[²]/g, "2")
-  
-  // 3. 修正字母大小写
-  // - 标准转体 R/L/U/D/F/B/M/E/S/X/Y/Z → 大写
-  // - 宽转 r/l/u/d/f/b（双层转）→ 保持小写
-  result = result.replace(/\b([urfdlbmesxyz])(['2]?)\b/gi, (match, letter, modifier) => {
-    const lower = letter.toLowerCase()
-    // 宽转（r/l/u/d/f/b）保持小写，其他转大写
-    if ('rludfb'.includes(lower)) {
-      return lower.toUpperCase() + (modifier || '')
-    }
-    return lower.toUpperCase() + (modifier || '')
-  })
-  
-  // 4. 确保修饰符正确（' 和 2）
-  // 移除字母和修饰符之间的空格
-  result = result.replace(/([URFDLBMESXYZ])\s+(['2])/g, '$1$2')
-  
-  // 5. 添加空格分隔（如果公式是连续的）
-  result = result.replace(/([URFDLBMESXYZ]['2]?)(?=[URFDLBMESXYZ])/g, '$1 ')
-  
-  // 6. 移除非法字符
-  result = result.replace(/[^URFDLBMESXYZ'2\s]/gi, '')
-  
-  // 7. 最终清理：确保单词之间只有一个空格
-  result = result.replace(/\s+/g, ' ').trim()
-  
-  return result
+function extractCandidateLines(text: string): string[] {
+  const lines = text.replace(/\r/g, '').split('\n')
+  const out: string[] = []
+  for (const line of lines) {
+    const m = line.match(/^\s*(?:S\d+|SOLUTION\d*|CANDIDATE\d+)\s*[:?]\s*(.+)\s*$/i)
+    if (m && m[1]) out.push(m[1].trim())
+  }
+  if (out.length > 0) return out
+  const fallback = text.match(/(?:S\d+|SOLUTION\d*)\s*[:?]\s*([A-Za-z0-9'\s]+)/gi) || []
+  return fallback.map((x) => x.replace(/^[^:?]*[:?]\s*/, '').trim()).filter(Boolean)
 }
 
 /**
- * 根据 TPS 判断水平等级
+ * 鍚庡鐞嗭細淇甯歌鐨?OCR 璇嗗埆閿欒
  */
-function getSkillLevel(tps: number): { level: string; description: string; nextGoal: string } {
-  if (tps >= 8) {
-    return { 
-      level: '世界级', 
-      description: '你的 TPS 已达到世界顶尖水平！',
-      nextGoal: '保持状态，优化预判和手法流畅度'
+function parseMoveTokens(text: string): string[] {
+  const normalized = text
+    .replace(/[鈥欌€榒麓]/g, "'")
+    .replace(/[虏]/g, '2')
+    .replace(/[\r\n\t,锛?锛泑]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  if (!normalized) return []
+
+  const parts = normalized.split(' ').filter(Boolean)
+  const out: string[] = []
+
+  for (const part of parts) {
+    const token = part.replace(/[^A-Za-z0-9']/g, '')
+    if (!token) continue
+
+    if (token === "'" || token === '2' || token === "2'" || token === "'2") {
+      if (out.length === 0) continue
+      const last = out[out.length - 1]
+      if (/[2']$/.test(last)) continue
+      out[out.length - 1] = `${last}${token.includes('2') ? '2' : "'"}`
+      continue
     }
-  } else if (tps >= 6) {
-    return { 
-      level: '高级', 
-      description: '你已经是一名高级速拧选手',
-      nextGoal: '目标 TPS 7+，专注于减少停顿和优化 F2L 预判'
+
+    const direct = token.match(/^([RLUDFBrludfb])([2']|2'|'2)?$/)
+    if (direct) {
+      const rawFace = direct[1]
+      const face = /[rludfb]/.test(rawFace) ? rawFace : rawFace.toUpperCase()
+      const modRaw = direct[2] || ''
+      const mod = modRaw.includes('2') ? '2' : modRaw.includes("'") ? "'" : ''
+      out.push(`${face}${mod}`)
+      continue
     }
-  } else if (tps >= 4.5) {
-    return { 
-      level: '中高级', 
-      description: '你正在向高级水平迈进',
-      nextGoal: '目标 TPS 6+，学习高级 F2L 技巧和 COLL'
+
+    const embedded = token.match(/[RLUDFBrludfb](?:2|')?/g)
+    if (!embedded) continue
+    for (const m of embedded) {
+      const rawFace = m[0]
+      const face = /[rludfb]/.test(rawFace) ? rawFace : rawFace.toUpperCase()
+      const mod = m.includes('2') ? '2' : m.includes("'") ? "'" : ''
+      out.push(`${face}${mod}`)
     }
-  } else if (tps >= 3) {
-    return { 
-      level: '中级', 
-      description: '你已经掌握了 CFOP 基础',
-      nextGoal: '目标 TPS 4.5+，完善 OLL/PLL 公式和手法'
+  }
+
+  return out.filter((m) => /^[RLUDFBrludfb][2']?$/.test(m))
+}
+
+function postProcessFormula(text: string): string {
+  return parseMoveTokens(text).join(' ')
+}
+
+function extractLabelBlock(content: string, label: 'SCRAMBLE' | 'SOLUTION'): string {
+  const lines = content.replace(/\r/g, '').split('\n')
+  const labelRe = new RegExp(`^\\s*${label}\\s*:`, 'i')
+  const anyLabelRe = /^\s*(SCRAMBLE|SOLUTION)\s*:/i
+  const moveLineRe = /^[\sRLUDFBrludfb2'鈥欌€榒.,;:|/-]+$/
+
+  const idx = lines.findIndex((line) => labelRe.test(line))
+  if (idx < 0) return ''
+
+  const first = lines[idx].replace(labelRe, '').trim()
+  const chunks: string[] = [first]
+  for (let i = idx + 1; i < lines.length; i++) {
+    const line = lines[i].trim()
+    if (!line) continue
+    if (anyLabelRe.test(line)) break
+    if (!moveLineRe.test(line)) break
+    chunks.push(line)
+  }
+  return chunks.join(' ').trim()
+}
+
+function normalizeMoves(formula: string): string[] {
+  return parseMoveTokens(formula)
+}
+
+const OUTER_MOVE_SET = [
+  'R', "R'", 'R2',
+  'L', "L'", 'L2',
+  'U', "U'", 'U2',
+  'D', "D'", 'D2',
+  'F', "F'", 'F2',
+  'B', "B'", 'B2',
+  'r', "r'", 'r2',
+  'l', "l'", 'l2',
+  'u', "u'", 'u2',
+  'd', "d'", 'd2',
+  'f', "f'", 'f2',
+  'b', "b'", 'b2',
+]
+
+function canSolveMoves(scramble: string, moves: string[]): boolean {
+  if (!scramble || moves.length === 0) return false
+  try {
+    const state = applyScramble(createSolvedCubeState(), scramble)
+    return state.move(moves.join(' ')).isSolved()
+  } catch {
+    return false
+  }
+}
+
+function autoFixOneEdit(scramble: string, solution: string): string | null {
+  const moves = normalizeMoves(solution)
+  if (moves.length === 0) return null
+  if (canSolveMoves(scramble, moves)) return moves.join(' ')
+  let evalCount = 0
+  const evalLimit = 24000
+  const test = (candidate: string[]): boolean => {
+    evalCount += 1
+    if (evalCount > evalLimit) return false
+    return canSolveMoves(scramble, candidate)
+  }
+
+  // 1) deletion (drop one noisy token)
+  for (let i = 0; i < moves.length; i++) {
+    const candidate = moves.slice(0, i).concat(moves.slice(i + 1))
+    if (test(candidate)) {
+      return candidate.join(' ')
     }
-  } else if (tps >= 2) {
-    return { 
-      level: '初中级', 
-      description: '你正在学习速拧方法',
-      nextGoal: '目标 TPS 3+，熟练掌握 F2L 41 种情况'
+  }
+
+  // 2) substitution (fix one wrong token)
+  for (let i = 0; i < moves.length; i++) {
+    for (const mv of OUTER_MOVE_SET) {
+      if (mv === moves[i]) continue
+      const candidate = moves.slice()
+      candidate[i] = mv
+      if (test(candidate)) {
+        return candidate.join(' ')
+      }
     }
-  } else {
-    return { 
-      level: '初级', 
-      description: '你刚开始学习速拧',
-      nextGoal: '目标 TPS 2+，先熟悉十字和基础 F2L'
+  }
+
+  // 3) insertion (recover one missed token)
+  for (let i = 0; i <= moves.length; i++) {
+    for (const mv of OUTER_MOVE_SET) {
+      const candidate = moves.slice(0, i).concat([mv], moves.slice(i))
+      if (test(candidate)) {
+        return candidate.join(' ')
+      }
     }
+  }
+
+  // 4) delete two noisy tokens
+  for (let i = 0; i < moves.length; i++) {
+    for (let j = i + 1; j < moves.length; j++) {
+      const candidate = moves.filter((_, idx) => idx !== i && idx !== j)
+      if (test(candidate)) {
+        return candidate.join(' ')
+      }
+    }
+  }
+
+  // 5) substitute one + delete one
+  for (let i = 0; i < moves.length; i++) {
+    for (const mv of OUTER_MOVE_SET) {
+      if (mv === moves[i]) continue
+      const sub = moves.slice()
+      sub[i] = mv
+      for (let j = 0; j < sub.length; j++) {
+        const candidate = sub.slice(0, j).concat(sub.slice(j + 1))
+        if (test(candidate)) {
+          return candidate.join(' ')
+        }
+      }
+    }
+  }
+
+  return null
+}
+
+function canSolve(scramble: string, solution: string): boolean {
+  if (!scramble || !solution) return false
+  try {
+    const state = applyScramble(createSolvedCubeState(), scramble)
+    const moves = normalizeMoves(solution)
+    if (moves.length === 0) return false
+    const after = state.move(moves.join(' '))
+    return after.isSolved()
+  } catch {
+    return false
   }
 }
 
 /**
- * 生成专业分析提示词
+ * 鏍规嵁 TPS 鍒ゆ柇姘村钩绛夌骇
  */
+function getSkillLevel(tps: number): { level: string; description: string; nextGoal: string } {
+  if (tps >= 8) {
+    return {
+      level: 'Expert',
+      description: 'Very high turning speed with strong lookahead and stable execution.',
+      nextGoal: 'Improve consistency under pressure and reduce risky regrips in late stages.',
+    }
+  }
+  if (tps >= 6) {
+    return {
+      level: 'Advanced',
+      description: 'Fast and efficient solve pace with solid CFOP fundamentals.',
+      nextGoal: 'Push toward 7+ TPS while keeping F2L fluid and reducing pauses.',
+    }
+  }
+  if (tps >= 4.5) {
+    return {
+      level: 'Upper Intermediate',
+      description: 'Good baseline speed with room to improve transitions and lookahead.',
+      nextGoal: 'Reach 6+ TPS and improve OLL/PLL recognition speed.',
+    }
+  }
+  if (tps >= 3) {
+    return {
+      level: 'Intermediate',
+      description: 'Basic CFOP flow is present, but pauses still affect continuity.',
+      nextGoal: 'Target 4.5+ TPS and train smoother F2L pair tracking.',
+    }
+  }
+  if (tps >= 2) {
+    return {
+      level: 'Beginner+',
+      description: 'Core method is usable, but execution is still cautious.',
+      nextGoal: 'Reach 3+ TPS by drilling common triggers and reducing hesitations.',
+    }
+  }
+  return {
+    level: 'Beginner',
+    description: 'Early stage solving speed; focus on move accuracy first.',
+    nextGoal: 'Build reliable turning mechanics and move toward 2+ TPS.',
+  }
+}
+
 function getAnalysisPrompt(): string {
-  return `你是一位世界级魔方速拧教练，拥有 WCA 比赛经验和专业教学背景。你的任务是分析魔方星球（Cube Planet）应用的截图，提供专业级的分析和建议。
+  return `浣犳槸涓€浣嶄笘鐣岀骇榄旀柟閫熸嫥鏁欑粌锛屾嫢鏈?WCA 姣旇禌缁忛獙鍜屼笓涓氭暀瀛﹁儗鏅€備綘鐨勪换鍔℃槸鍒嗘瀽榄旀柟鏄熺悆锛圕ube Planet锛夊簲鐢ㄧ殑鎴浘锛屾彁渚涗笓涓氱骇鐨勫垎鏋愬拰寤鸿銆?
 
-## 第一步：精确提取数据
+## 绗竴姝ワ細绮剧‘鎻愬彇鏁版嵁
 
-请从截图中精确识别以下信息：
-1. **打乱公式**：完整的打乱序列
-2. **复原公式**：用户的完整解法
-3. **步数**：总步数（HTM 计数）
-4. **用时**：完成时间（秒）
-5. **TPS**：每秒转动次数（Turns Per Second）
+璇蜂粠鎴浘涓簿纭瘑鍒互涓嬩俊鎭細
+1. **鎵撲贡鍏紡**锛氬畬鏁寸殑鎵撲贡搴忓垪
+2. **澶嶅師鍏紡**锛氱敤鎴风殑瀹屾暣瑙ｆ硶
+3. **姝ユ暟**锛氭€绘鏁帮紙HTM 璁℃暟锛?
+4. **鐢ㄦ椂**锛氬畬鎴愭椂闂达紙绉掞級
+5. **TPS**锛氭瘡绉掕浆鍔ㄦ鏁帮紙Turns Per Second锛?
 
-## 第二步：分析解法结构
+## 绗簩姝ワ細鍒嗘瀽瑙ｆ硶缁撴瀯
 
-识别 CFOP 各阶段：
-- **Cross（十字）**：底层十字的步数和效率
-- **F2L（前两层）**：四组 F2L 的分析
-- **OLL（顶层朝向）**：使用的 OLL 公式
-- **PLL（顶层排列）**：使用的 PLL 公式
+璇嗗埆 CFOP 鍚勯樁娈碉細
+- **Cross锛堝崄瀛楋級**锛氬簳灞傚崄瀛楃殑姝ユ暟鍜屾晥鐜?
+- **F2L锛堝墠涓ゅ眰锛?*锛氬洓缁?F2L 鐨勫垎鏋?
+- **OLL锛堥《灞傛湞鍚戯級**锛氫娇鐢ㄧ殑 OLL 鍏紡
+- **PLL锛堥《灞傛帓鍒楋級**锛氫娇鐢ㄧ殑 PLL 鍏紡
 
-## 第三步：识别高级技巧
+## 绗笁姝ワ細璇嗗埆楂樼骇鎶€宸?
 
-检查是否使用了以下高级技巧：
-- **XCross**：十字+1组 F2L 同时完成
-- **XXCross**：十字+2组 F2L 同时完成
-- **COLL**：角块朝向+排列同时完成
-- **ZBLL**：顶层一步完成
-- **控槽法**：利用空槽优化入槽
-- **预判**：F2L 过程中的 lookahead
+妫€鏌ユ槸鍚︿娇鐢ㄤ簡浠ヤ笅楂樼骇鎶€宸э細
+- **XCross**锛氬崄瀛?1缁?F2L 鍚屾椂瀹屾垚
+- **XXCross**锛氬崄瀛?2缁?F2L 鍚屾椂瀹屾垚
+- **COLL**锛氳鍧楁湞鍚?鎺掑垪鍚屾椂瀹屾垚
+- **ZBLL**锛氶《灞備竴姝ュ畬鎴?
+- **鎺фЫ娉?*锛氬埄鐢ㄧ┖妲戒紭鍖栧叆妲?
+- **棰勫垽**锛欶2L 杩囩▼涓殑 lookahead
 
-## 输出格式（严格遵守 JSON 格式）
+## 杈撳嚭鏍煎紡锛堜弗鏍奸伒瀹?JSON 鏍煎紡锛?
 
 \`\`\`json
 {
   "extracted_data": {
-    "scramble": "打乱公式",
-    "solution": "复原公式",
-    "move_count": 步数数字,
-    "time_seconds": 用时数字,
-    "tps": TPS数字
+    "scramble": "鎵撲贡鍏紡",
+    "solution": "澶嶅師鍏紡",
+    "move_count": 姝ユ暟鏁板瓧,
+    "time_seconds": 鐢ㄦ椂鏁板瓧,
+    "tps": TPS鏁板瓧
   },
   "cfop_breakdown": {
     "cross": {
-      "moves": "十字公式",
-      "move_count": 步数,
-      "efficiency": "评价：优秀/良好/需改进",
-      "could_be_xcross": true或false,
-      "xcross_suggestion": "如果可以做 XCross，给出建议"
+      "moves": "鍗佸瓧鍏紡",
+      "move_count": 姝ユ暟,
+      "efficiency": "璇勪环锛氫紭绉€/鑹ソ/闇€鏀硅繘",
+      "could_be_xcross": true鎴杅alse,
+      "xcross_suggestion": "濡傛灉鍙互鍋?XCross锛岀粰鍑哄缓璁?
     },
     "f2l_pairs": [
       {
         "pair_number": 1,
-        "moves": "F2L 公式",
-        "move_count": 步数,
-        "efficiency": "评价",
-        "optimization": "优化建议",
-        "alternative_solution": "更优解法（如果有）"
+        "moves": "F2L 鍏紡",
+        "move_count": 姝ユ暟,
+        "efficiency": "璇勪环",
+        "optimization": "浼樺寲寤鸿",
+        "alternative_solution": "鏇翠紭瑙ｆ硶锛堝鏋滄湁锛?
       }
     ],
     "oll": {
-      "case_name": "OLL 情况名称（如 OLL 21）",
-      "moves": "使用的公式",
-      "is_optimal": true或false,
-      "better_algorithm": "更好的公式（如果有）",
-      "coll_available": true或false,
-      "coll_suggestion": "如果可以用 COLL，给出建议"
+      "case_name": "OLL 鎯呭喌鍚嶇О锛堝 OLL 21锛?,
+      "moves": "浣跨敤鐨勫叕寮?,
+      "is_optimal": true鎴杅alse,
+      "better_algorithm": "鏇村ソ鐨勫叕寮忥紙濡傛灉鏈夛級",
+      "coll_available": true鎴杅alse,
+      "coll_suggestion": "濡傛灉鍙互鐢?COLL锛岀粰鍑哄缓璁?
     },
     "pll": {
-      "case_name": "PLL 情况名称（如 T-Perm）",
-      "moves": "使用的公式",
-      "is_optimal": true或false,
-      "better_algorithm": "更好的公式（如果有）"
+      "case_name": "PLL 鎯呭喌鍚嶇О锛堝 T-Perm锛?,
+      "moves": "浣跨敤鐨勫叕寮?,
+      "is_optimal": true鎴杅alse,
+      "better_algorithm": "鏇村ソ鐨勫叕寮忥紙濡傛灉鏈夛級"
     }
   },
   "advanced_techniques": {
-    "xcross_used": true或false,
-    "xxcross_used": true或false,
-    "coll_used": true或false,
-    "slot_control_used": true或false,
-    "good_lookahead": true或false,
-    "techniques_to_learn": ["建议学习的技巧列表"]
+    "xcross_used": true鎴杅alse,
+    "xxcross_used": true鎴杅alse,
+    "coll_used": true鎴杅alse,
+    "slot_control_used": true鎴杅alse,
+    "good_lookahead": true鎴杅alse,
+    "techniques_to_learn": ["寤鸿瀛︿範鐨勬妧宸у垪琛?]
   },
   "skill_assessment": {
-    "level": "水平等级",
-    "strengths": ["优点列表"],
-    "weaknesses": ["需要改进的地方"],
-    "priority_improvements": ["优先改进事项，按重要性排序"]
+    "level": "姘村钩绛夌骇",
+    "strengths": ["浼樼偣鍒楄〃"],
+    "weaknesses": ["闇€瑕佹敼杩涚殑鍦版柟"],
+    "priority_improvements": ["浼樺厛鏀硅繘浜嬮」锛屾寜閲嶈鎬ф帓搴?]
   },
   "weekly_training_plan": {
-    "day1": {"focus": "训练重点", "exercises": ["具体练习"], "duration": "建议时长"},
-    "day2": {"focus": "训练重点", "exercises": ["具体练习"], "duration": "建议时长"},
-    "day3": {"focus": "训练重点", "exercises": ["具体练习"], "duration": "建议时长"},
-    "day4": {"focus": "训练重点", "exercises": ["具体练习"], "duration": "建议时长"},
-    "day5": {"focus": "训练重点", "exercises": ["具体练习"], "duration": "建议时长"},
-    "day6": {"focus": "训练重点", "exercises": ["具体练习"], "duration": "建议时长"},
-    "day7": {"focus": "休息或复习", "exercises": ["轻松练习"], "duration": "建议时长"}
+    "day1": {"focus": "璁粌閲嶇偣", "exercises": ["鍏蜂綋缁冧範"], "duration": "寤鸿鏃堕暱"},
+    "day2": {"focus": "璁粌閲嶇偣", "exercises": ["鍏蜂綋缁冧範"], "duration": "寤鸿鏃堕暱"},
+    "day3": {"focus": "璁粌閲嶇偣", "exercises": ["鍏蜂綋缁冧範"], "duration": "寤鸿鏃堕暱"},
+    "day4": {"focus": "璁粌閲嶇偣", "exercises": ["鍏蜂綋缁冧範"], "duration": "寤鸿鏃堕暱"},
+    "day5": {"focus": "璁粌閲嶇偣", "exercises": ["鍏蜂綋缁冧範"], "duration": "寤鸿鏃堕暱"},
+    "day6": {"focus": "璁粌閲嶇偣", "exercises": ["鍏蜂綋缁冧範"], "duration": "寤鸿鏃堕暱"},
+    "day7": {"focus": "浼戞伅鎴栧涔?, "exercises": ["杞绘澗缁冧範"], "duration": "寤鸿鏃堕暱"}
   },
   "learning_resources": {
     "videos": [
-      {"title": "视频标题", "url": "链接", "relevance": "为什么推荐"}
+      {"title": "瑙嗛鏍囬", "url": "閾炬帴", "relevance": "涓轰粈涔堟帹鑽?}
     ],
     "websites": [
-      {"name": "网站名", "url": "链接", "content": "推荐内容"}
+      {"name": "缃戠珯鍚?, "url": "閾炬帴", "content": "鎺ㄨ崘鍐呭"}
     ],
     "practice_tools": [
-      {"name": "工具名", "description": "用途"}
+      {"name": "宸ュ叿鍚?, "description": "鐢ㄩ€?}
     ]
   },
-  "coach_summary": "教练总结：用 2-3 句话总结分析结果和最重要的改进建议"
+  "coach_summary": "鏁欑粌鎬荤粨锛氱敤 2-3 鍙ヨ瘽鎬荤粨鍒嗘瀽缁撴灉鍜屾渶閲嶈鐨勬敼杩涘缓璁?
 }
 \`\`\`
 
-## 重要提示
+## 閲嶈鎻愮ず
 
-1. 所有数据必须从截图中精确提取，不要估算
-2. 如果某些信息无法识别，使用 null 表示
-3. 分析要专业、具体、可操作
-4. 推荐的资源必须是真实存在的（J Perm、CubeSkills 等知名教程）
-5. 训练计划要根据用户的实际水平定制`
+1. 鎵€鏈夋暟鎹繀椤讳粠鎴浘涓簿纭彁鍙栵紝涓嶈浼扮畻
+2. 濡傛灉鏌愪簺淇℃伅鏃犳硶璇嗗埆锛屼娇鐢?null 琛ㄧず
+3. 鍒嗘瀽瑕佷笓涓氥€佸叿浣撱€佸彲鎿嶄綔
+4. 鎺ㄨ崘鐨勮祫婧愬繀椤绘槸鐪熷疄瀛樺湪鐨勶紙J Perm銆丆ubeSkills 绛夌煡鍚嶆暀绋嬶級
+5. 璁粌璁″垝瑕佹牴鎹敤鎴风殑瀹為檯姘村钩瀹氬埗`
 }
 
 /**
  * POST /api/ocr/cube-formula
- * 接收图片 base64，使用火山引擎 Vision 识别魔方公式并提供专业分析
+ * 鎺ユ敹鍥剧墖 base64锛屼娇鐢ㄧ伀灞卞紩鎿?Vision 璇嗗埆榄旀柟鍏紡骞舵彁渚涗笓涓氬垎鏋?
  */
 export async function POST(request: NextRequest) {
   try {
     const { image, mode = 'full' } = await request.json()
 
     if (!image) {
-      return NextResponse.json({ error: '缺少图片数据' }, { status: 400 })
+      return NextResponse.json({ error: '缂哄皯鍥剧墖鏁版嵁' }, { status: 400 })
     }
 
-    // 构建图片 URL（支持 base64 和 URL）
+    // 鏋勫缓鍥剧墖 URL锛堟敮鎸?base64 鍜?URL锛?
     const imageUrl = image.startsWith('http') 
       ? image 
       : `data:image/png;base64,${image}`
@@ -276,24 +433,22 @@ export async function POST(request: NextRequest) {
     console.log('[OCR] Base URL:', baseURL)
     console.log('[OCR] Model:', model)
 
-    // 根据模式选择不同的分析深度
+    // 鏍规嵁妯″紡閫夋嫨涓嶅悓鐨勫垎鏋愭繁搴?
     const isSimpleMode = mode === 'simple'
     
     const systemPrompt = isSimpleMode 
-      ? `你是一个专业的魔方公式识别专家。请从魔方星球截图中精确提取：
-1. 打乱公式（SCRAMBLE）
-2. 复原公式（SOLUTION）
-
-输出格式：
-SCRAMBLE: [打乱公式]
-SOLUTION: [复原公式]`
+      ? `You are a Rubik's cube OCR extractor.
+Only extract SCRAMBLE from the screenshot.
+Do not extract or guess any solution.
+Output exactly one line:
+SCRAMBLE: [moves]` 
       : getAnalysisPrompt()
 
     const userPrompt = isSimpleMode
-      ? '请识别这张魔方星球截图中的打乱公式和复原公式。'
-      : '请分析这张魔方星球截图，提取所有数据并提供专业级分析。请严格按照 JSON 格式输出。'
+      ? '请识别这张魔方星球截图中的打乱公式。'
+      : '请分析这张魔方星球截图，提取关键信息并按 JSON 格式输出。'
 
-    // 调用火山引擎 Vision API
+    // 璋冪敤鐏北寮曟搸 Vision API
     const response = await requestVolcengineWithRetry(`${baseURL}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -340,26 +495,20 @@ SOLUTION: [复原公式]`
     console.log('[OCR] Raw response length:', content.length)
 
     if (isSimpleMode) {
-      // 简单模式：只提取公式
-      const scrambleMatch = content.match(/SCRAMBLE:\s*(.*)/)
-      const solutionMatch = content.match(/SOLUTION:\s*(.*)/)
-      
-      let scramble = scrambleMatch ? scrambleMatch[1].trim() : ''
-      let solution = solutionMatch ? solutionMatch[1].trim() : ''
-      
+      const scrambleBlock = extractLabelBlock(content, 'SCRAMBLE')
+      const scrambleMatch = content.match(/SCRAMBLE:\s*(.*)/i)
+      let scramble = scrambleBlock || (scrambleMatch ? scrambleMatch[1].trim() : '')
       scramble = postProcessFormula(scramble)
-      solution = postProcessFormula(solution)
-
       return NextResponse.json({
         scramble,
-        solution,
+        solution: '',
         raw: content
       })
     }
 
-    // 专业模式：解析 JSON 分析结果
+    // 涓撲笟妯″紡锛氳В鏋?JSON 鍒嗘瀽缁撴灉
     try {
-      // 尝试提取 JSON
+      // 灏濊瘯鎻愬彇 JSON
       const jsonMatch = content.match(/```json\s*([\s\S]*?)\s*```/) || 
                         content.match(/\{[\s\S]*\}/)
       
@@ -367,7 +516,7 @@ SOLUTION: [复原公式]`
         const jsonStr = jsonMatch[1] || jsonMatch[0]
         const analysis = JSON.parse(jsonStr)
         
-        // 后处理公式
+        // 鍚庡鐞嗗叕寮?
         if (analysis.extracted_data) {
           if (analysis.extracted_data.scramble) {
             analysis.extracted_data.scramble = postProcessFormula(analysis.extracted_data.scramble)
@@ -376,14 +525,14 @@ SOLUTION: [复原公式]`
             analysis.extracted_data.solution = postProcessFormula(analysis.extracted_data.solution)
           }
           
-          // 添加技能水平评估
+          // 娣诲姞鎶€鑳芥按骞宠瘎浼?
           if (analysis.extracted_data.tps) {
             const skillLevel = getSkillLevel(analysis.extracted_data.tps)
             analysis.skill_level = skillLevel
           }
         }
 
-        // 添加推荐资源（确保是真实的）
+        // 娣诲姞鎺ㄨ崘璧勬簮锛堢‘淇濇槸鐪熷疄鐨勶級
         if (!analysis.learning_resources) {
           analysis.learning_resources = getDefaultResources()
         }
@@ -402,11 +551,11 @@ SOLUTION: [复原公式]`
       console.error('[OCR] JSON parse error:', parseError)
     }
 
-    // 如果 JSON 解析失败，回退到简单模式
+    // 濡傛灉 JSON 瑙ｆ瀽澶辫触锛屽洖閫€鍒扮畝鍗曟ā寮?
     const scrambleMatch = content.match(/scramble["\s:]+([^"]+)/i) ||
-                          content.match(/打乱[公式]*[：:]\s*(.+)/i)
+                          content.match(/鎵撲贡[鍏紡]*[锛?]\s*(.+)/i)
     const solutionMatch = content.match(/solution["\s:]+([^"]+)/i) ||
-                          content.match(/复原[公式]*[：:]\s*(.+)/i)
+                          content.match(/澶嶅師[鍏紡]*[锛?]\s*(.+)/i)
     
     let scramble = scrambleMatch ? scrambleMatch[1].trim() : ''
     let solution = solutionMatch ? solutionMatch[1].trim() : ''
@@ -420,11 +569,11 @@ SOLUTION: [复原公式]`
       solution,
       analysis: null,
       raw: content,
-      parseError: 'JSON 解析失败，仅提取了公式'
+      parseError: 'JSON 解析失败，仅提取到公式'
     })
 
   } catch (error: unknown) {
-    console.error('[OCR Cube Formula] 错误:', error)
+    console.error('[OCR Cube Formula] 閿欒:', error)
     const rawError = error instanceof Error ? error.message : 'OCR request failed'
     const errorMessage = /fetch failed|aborted|network|timeout/i.test(rawError)
       ? 'OCR upstream network timeout, please retry'
@@ -437,25 +586,25 @@ SOLUTION: [复原公式]`
 }
 
 /**
- * 获取默认推荐资源
+ * 鑾峰彇榛樿鎺ㄨ崘璧勬簮
  */
 function getDefaultResources() {
   return {
     videos: [
       {
-        title: "J Perm - 如何提高 F2L",
+        title: "J Perm - 濡備綍鎻愰珮 F2L",
         url: "https://www.youtube.com/watch?v=3B_oB2YrLvk",
         relevance: "系统讲解 F2L 优化技巧"
       },
       {
-        title: "J Perm - Lookahead 教程",
+        title: "J Perm - Lookahead 鏁欑▼",
         url: "https://www.youtube.com/watch?v=Sw3DpueJsWM",
-        relevance: "提高预判能力的关键"
+        relevance: "提升 lookahead 预判能力"
       },
       {
-        title: "J Perm - 完整 CFOP 教程",
+        title: "J Perm - 瀹屾暣 CFOP 鏁欑▼",
         url: "https://www.youtube.com/watch?v=MS5jByTX_pk",
-        relevance: "CFOP 方法全面讲解"
+        relevance: "CFOP 鏂规硶鍏ㄩ潰璁茶В"
       }
     ],
     websites: [
@@ -472,7 +621,7 @@ function getDefaultResources() {
       {
         name: "SpeedSolving Wiki",
         url: "https://www.speedsolving.com/wiki",
-        content: "魔方速拧百科全书"
+        content: "榄旀柟閫熸嫥鐧剧鍏ㄤ功"
       }
     ],
     practice_tools: [
@@ -482,12 +631,14 @@ function getDefaultResources() {
       },
       {
         name: "Cube Explorer",
-        description: "最优解生成器"
+        description: "最优解生成工具"
       },
       {
-        name: "魔方星球",
-        description: "手机端练习和记录工具"
+        name: "榄旀柟鏄熺悆",
+        description: "鎵嬫満绔粌涔犲拰璁板綍宸ュ叿"
       }
     ]
   }
 }
+
+
