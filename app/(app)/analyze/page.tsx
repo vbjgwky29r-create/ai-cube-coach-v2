@@ -347,9 +347,15 @@ export default function AnalyzePage() {
   }
 
   const handleAnalyze = async () => {
-    const finalSolution = solution.trim() || stageSummaryFormula.trim() || String(optimalResult?.optimalSolution || '').trim()
+    const { normalized: normalizedScramble } = parseScrambleInput(scramble.trim())
+    const manualSolution = solution.trim()
+    const stageFormulaForCurrentScramble =
+      stageResult?.scramble === normalizedScramble ? stageSummaryFormula.trim() : ''
+    const optimalFormulaForCurrentScramble =
+      optimalResult?.scramble === normalizedScramble ? String(optimalResult?.optimalSolution || '').trim() : ''
+    const finalSolution = manualSolution || stageFormulaForCurrentScramble || optimalFormulaForCurrentScramble
     if (!finalSolution) {
-      alert('Please enter a solution, or generate a reference solution first.')
+      alert('请先手动输入还原公式，或先为当前打乱生成参考解法。')
       return
     }
     setAnalyzing(true)
@@ -394,12 +400,22 @@ export default function AnalyzePage() {
       })
       const data = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(typeof data?.error === 'string' ? data.error : 'OCR 识别失败')
-      if (data.scramble) setScramble(data.scramble)
-            if (!data.scramble) {
+      if (data.scramble) {
+        // OCR only fills scramble. Clear stale user solution and previous generated references.
+        setScramble(data.scramble)
+        setSolution('')
+        setResult(null)
+        setAnalyzeError(null)
+        setStageResult(null)
+        setStageViews(createEmptyStageViews())
+        setStageError(null)
+        setOptimalResult(null)
+        setOptimalError(null)
+      } else {
         alert('OCR 未识别到打乱公式，请手动输入。')
       }
     } catch (err: any) {
-      alert(`OCR 失败: ${String(err?.message || '未知错误')}`)
+      alert('OCR 失败: ' + String(err?.message || '未知错误'))
     } finally {
       setOcrLoading(false)
       e.target.value = ''
